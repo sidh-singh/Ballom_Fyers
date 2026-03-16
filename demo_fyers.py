@@ -1,0 +1,642 @@
+"""
+demo_fyers.py — Drop-in paper-trading replacement for Fyers.
+
+Extends the real Fyers class so that all market-data methods (historical
+data, holiday fetch, CSV downloads) still hit the live API, but
+BUY / SELL / POSITION are simulated locally.
+
+Storage: C:/Ballom_FYR/demo/
+  ├── demo_account.json      — balance, realized P&L, win/loss stats
+  ├── demo_positions.json    — open positions keyed by symbol_productType
+  ├── demo_trades.json       — recent trades (current session)
+  ├── demo_trade_history.json — append-only historical trade log
+  └── logs/
+      └── trade_log_YYYY-MM-DD.txt — human-readable daily transaction log
+
+All runtime information is written to JSON state files —
+no print/log statements.
+"""
+
+from __future__ import annotations
+
+import json
+import uuid
+import threading
+from dataclasses import dataclass, asdict, field
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, List, Tuple
+
+import numpy as np
+import pandas as pd
+
+from fyers import Fyers
+from constants import (
+    POSITION_COL, TRADE_COLS, ORDER_COLS,
+    OverallPosition, Transaction,
+    estimate_trade_charges,
+)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  STORAGE PATHS  (all under C:/Ballom_FYR/demo/)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+DEMO_STORAGE     = Path("C:/Ballom_FYR/demo")
+POSITIONS_FILE   = DEMO_STORAGE / "demo_positions.json"
+TRADES_FILE      = DEMO_STORAGE / "demo_trades.json"
+ACCOUNT_FILE     = DEMO_STORAGE / "demo_account.json"
+HISTORY_FILE     = DEMO_STORAGE / "demo_trade_history.json"
+DAILY_PNL_FILE   = DEMO_STORAGE / "demo_daily_pnl.json"
+LOGS_DIR                = DEMO_STORAGE / "logs"
+REALIZED_BY_SYMBOL_FILE = DEMO_STORAGE / "demo_realized_by_symbol.json"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  DATA CLASSES
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@dataclass
+class DemoPosition:
+    """A single simulated position."""
+    symbol: str
+    qty: int
+    side: int               # 1 = long, -1 = short
+    avg_price: float
+    product_type: str
+    entry_time: str
+    unrealized_pl: float = 0.0
+    realized_pl: float = 0.0
+    ltp: float = 0.0
+    position_id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
+
+
+@dataclass
+class DemoTrade:
+    """Record of a single executed trade."""
+    trade_id: str
+    symbol: str
+    side: int               # 1 = buy, -1 = sell
+    qty: int
+    price: float
+    product_type: str
+    timestamp: str
+    order_type: str         # ENTRY | EXIT | PARTIAL_EXIT
+    pnl: float = 0.0
+
+
+@dataclass
+class DemoAccount:
+    """Paper-trading account state."""
+    initial_balance: float = 500_000.0
+    current_balance: float = 500_000.0
+    utilized_margin: float = 0.0
+    realized_pnl: float = 0.0
+    unrealized_pnl: float = 0.0
+    total_trades: int = 0
+    winning_trades: int = 0
+    losing_trades: int = 0
+    last_updated: str = ""
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  DEMO FYERS CLASS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class DemoFyers(Fyers):
+    """
+    Paper-trading drop-in for :class:`Fyers`.
+
+    Inherits everything from the real Fyers class so that market data,
+    historical candles, holidays, CSV downloads, and authentication all
+    work identically via the live API.
+
+    Only **order execution** and **position tracking** are overridden to
+    run locally with JSON persistence on C:/Ballom_FYR/demo/.
+    """
+
+    def __init__(self, initial_balance: float = 500_000.0) -> None:
+        super().__init__()
+        self.initial_balance = initial_balance
+        self._lock = threading.RLock()
+        self._ensure_storage()
+        self.account: DemoAccount = self._load_account()
+        self.demo_positions: Dict[str, DemoPosition] = self._load_positions()
+        self.trades: List[DemoTrade] = self._load_trades()
+        self._symbol_realized: Dict[str, float] = self._load_symbol_realized()
+        self._symbol_order_count: Dict[str, int] = {}
+        self._day_closed_positions: Dict[str, dict] = {}
+
+    # ╔══════════════════════════════════════════════════════════════════════════╗
+    # ║  STORAGE HELPERS                                                         ║
+    # ╚══════════════════════════════════════════════════════════════════════════╝
+
+    @staticmethod
+    def _ensure_storage() -> None:
+        DEMO_STORAGE.mkdir(parents=True, exist_ok=True)
+        LOGS_DIR.mkdir(parents=True, exist_ok=True)
+
+    @staticmethod
+    def _to_native(obj):
+        """Convert numpy / pandas types → native Python for JSON."""
+        if obj is None:
+            return None
+        if isinstance(obj, dict):
+            return {k: DemoFyers._to_native(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [DemoFyers._to_native(i) for i in obj]
+        if isinstance(obj, (np.integer,)):
+            return int(obj)
+        if isinstance(obj, (np.floating,)):
+            return float(obj)
+        if isinstance(obj, np.bool_):
+            return bool(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return obj
+
+    def _load_symbol_realized(self) -> Dict[str, float]:
+        """Load per-symbol cumulative realized P&L — resets at day change."""
+        if REALIZED_BY_SYMBOL_FILE.exists():
+            try:
+                with open(REALIZED_BY_SYMBOL_FILE, "r") as f:
+                    data = json.load(f)
+                if data.get("_date") != datetime.now().strftime("%Y-%m-%d"):
+                    return {"_date": datetime.now().strftime("%Y-%m-%d")}
+                return data
+            except Exception:
+                pass
+        return {"_date": datetime.now().strftime("%Y-%m-%d")}
+
+    def _save_symbol_realized(self) -> None:
+        self._symbol_realized["_date"] = datetime.now().strftime("%Y-%m-%d")
+        with open(REALIZED_BY_SYMBOL_FILE, "w") as f:
+            json.dump(self._symbol_realized, f, indent=2)
+
+    def _load_account(self) -> DemoAccount:
+        if ACCOUNT_FILE.exists():
+            try:
+                with open(ACCOUNT_FILE, "r") as f:
+                    return DemoAccount(**json.load(f))
+            except Exception:
+                pass
+        acct = DemoAccount(
+            initial_balance=self.initial_balance,
+            current_balance=self.initial_balance,
+            last_updated=datetime.now().isoformat(),
+        )
+        self._save_account(acct)
+        return acct
+
+    def _save_account(self, acct: DemoAccount | None = None) -> None:
+        acct = acct or self.account
+        acct.last_updated = datetime.now().isoformat()
+        with open(ACCOUNT_FILE, "w") as f:
+            json.dump(self._to_native(asdict(acct)), f, indent=2)
+
+    def _load_positions(self) -> Dict[str, DemoPosition]:
+        if POSITIONS_FILE.exists():
+            try:
+                with open(POSITIONS_FILE, "r") as f:
+                    data = json.load(f)
+                return {k: DemoPosition(**v) for k, v in data.items()}
+            except Exception:
+                pass
+        return {}
+
+    def _save_positions(self) -> None:
+        with self._lock:
+            data = {k: asdict(v) for k, v in self.demo_positions.items()}
+            with open(POSITIONS_FILE, "w") as f:
+                json.dump(self._to_native(data), f, indent=2)
+
+    def _load_trades(self) -> List[DemoTrade]:
+        if TRADES_FILE.exists():
+            try:
+                with open(TRADES_FILE, "r") as f:
+                    return [DemoTrade(**t) for t in json.load(f)]
+            except Exception:
+                pass
+        return []
+
+    def _save_trades(self) -> None:
+        with self._lock:
+            data = [asdict(t) for t in self.trades]
+            with open(TRADES_FILE, "w") as f:
+                json.dump(self._to_native(data), f, indent=2)
+
+    def _record_trade(self, trade: DemoTrade) -> None:
+        self.trades.append(trade)
+        self._save_trades()
+        self._append_history(trade)
+
+    def _append_history(self, trade: DemoTrade) -> None:
+        history: list = []
+        if HISTORY_FILE.exists():
+            try:
+                with open(HISTORY_FILE, "r") as f:
+                    history = json.load(f)
+            except Exception:
+                pass
+        history.append(self._to_native(asdict(trade)))
+        with open(HISTORY_FILE, "w") as f:
+            json.dump(history, f, indent=2)
+
+    @staticmethod
+    def _daily_log_path() -> Path:
+        return LOGS_DIR / f"trade_log_{datetime.now():%Y-%m-%d}.txt"
+
+    def _log_txn(self, action: str, symbol: str, qty: int, price: float,
+                 pnl: float = 0.0, details: str = "") -> None:
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        entry = (
+            f"\n{'=' * 80}\n"
+            f"[{ts}] {action}\n"
+            f"{'=' * 80}\n"
+            f"  Symbol      : {symbol}\n"
+            f"  Quantity    : {qty}\n"
+            f"  Price       : ₹{price:,.2f}\n"
+            f"  Total Value : ₹{price * qty:,.2f}\n"
+            f"  P&L         : ₹{pnl:,.2f}\n"
+            f"  Details     : {details}\n"
+            f"  Balance     : ₹{self.account.current_balance:,.2f}\n"
+            f"  Realized    : ₹{self.account.realized_pnl:,.2f}\n"
+            f"  Positions   : {len(self.demo_positions)}\n"
+            f"{'=' * 80}\n"
+        )
+        with open(self._daily_log_path(), "a", encoding="utf-8") as f:
+            f.write(entry)
+
+    # ╔══════════════════════════════════════════════════════════════════════════╗
+    # ║  PRICE FETCH (via real API)                                              ║
+    # ╚══════════════════════════════════════════════════════════════════════════╝
+
+    def _get_ltp(self, symbol: str) -> float:
+        """Fetch last-traded-price from live Fyers API."""
+        try:
+            resp = self.api.quotes(data={"symbols": symbol})
+            if resp.get("s") == "ok" and resp.get("d"):
+                return float(resp["d"][0].get("v", {}).get("lp", 0))
+        except Exception:
+            pass
+        return 0.0
+
+    # ╔══════════════════════════════════════════════════════════════════════════╗
+    # ║  ORDER EXECUTION — SIMULATED                                             ║
+    # ╚══════════════════════════════════════════════════════════════════════════╝
+
+    def buy(self, symbol: str, qty: int, product_type: str = "MARGIN") -> dict:
+        """Simulate a BUY order."""
+        ts = datetime.now()
+        ltp = float(self._get_ltp(symbol))
+        qty = int(qty)
+
+        if ltp <= 0:
+            return {"s": "error", "message": "Price not available"}
+
+        trade_value = ltp * qty
+        key = f"{symbol}_{product_type}"
+        pnl = 0.0
+        charges = 0.0
+        order_type = "ENTRY"
+
+        with self._lock:
+            self._symbol_order_count[key] = self._symbol_order_count.get(key, 0) + 1
+
+            if key in self.demo_positions:
+                pos = self.demo_positions[key]
+
+                if pos.side == -1:
+                    close_qty = min(qty, pos.qty)
+                    pnl = (pos.avg_price - ltp) * close_qty
+                    remaining = pos.qty - close_qty
+                    order_type = "EXIT" if remaining == 0 else "PARTIAL_EXIT"
+
+                    num_orders = self._symbol_order_count.get(key, 2)
+                    charges = estimate_trade_charges(close_qty, ltp, num_orders)
+
+                    if remaining <= 0:
+                        _cum_r = self._symbol_realized.get(key, 0.0) + pnl
+                        self._day_closed_positions[key] = {
+                            "symbol": symbol, "id": "", "netQty": 0,
+                            "netAvg": round(pos.avg_price, 2), "ltp": round(ltp, 2),
+                            "realized_profit": round(_cum_r, 2),
+                            "unrealized_profit": 0, "productType": product_type,
+                            "pl": round(_cum_r, 2), "qty": 0, "side": 0,
+                            "buyAvg": 0, "buyQty": 0, "sellAvg": 0, "sellQty": 0,
+                            "crossCurrency": "N", "rbiRefRate": 0,
+                            "qtyMulti_com": 1, "segment": 11, "exchange": "NSE",
+                            "slNo": 1, "fytoken": "",
+                            "cfBuyQty": 0, "cfSellQty": 0,
+                            "dayBuyQty": 0, "daySellQty": 0,
+                        }
+                        del self.demo_positions[key]
+                        self._symbol_order_count.pop(key, None)
+                    else:
+                        pos.qty = remaining
+
+                    self._symbol_realized[key] = self._symbol_realized.get(key, 0.0) + pnl
+                    self.account.realized_pnl += (pnl - charges)
+                    self.account.current_balance += (pnl - charges)
+                    self.account.utilized_margin -= pos.avg_price * close_qty
+                    if (pnl - charges) > 0:
+                        self.account.winning_trades += 1
+                    else:
+                        self.account.losing_trades += 1
+
+                    leftover = qty - close_qty
+                    if leftover > 0:
+                        self.demo_positions[key] = DemoPosition(
+                            symbol=symbol, qty=leftover, side=1,
+                            avg_price=ltp, product_type=product_type,
+                            entry_time=ts.isoformat(), ltp=ltp,
+                        )
+                        self.account.utilized_margin += ltp * leftover
+
+                elif pos.side == 1:
+                    total_qty = pos.qty + qty
+                    pos.avg_price = (pos.avg_price * pos.qty + ltp * qty) / total_qty
+                    pos.qty = total_qty
+                    pos.ltp = ltp
+                    self.account.utilized_margin += trade_value
+            else:
+                self.demo_positions[key] = DemoPosition(
+                    symbol=symbol, qty=qty, side=1,
+                    avg_price=ltp, product_type=product_type,
+                    entry_time=ts.isoformat(), ltp=ltp,
+                )
+                self.account.utilized_margin += trade_value
+
+            self.account.total_trades += 1
+            self._save_positions()
+            self._save_account()
+            self._save_symbol_realized()
+
+        trade = DemoTrade(
+            trade_id=str(uuid.uuid4())[:8], symbol=symbol, side=1,
+            qty=qty, price=ltp, product_type=product_type,
+            timestamp=ts.isoformat(), order_type=order_type, pnl=pnl,
+        )
+        self._record_trade(trade)
+        charge_note = f" | charges=₹{charges:.2f} net=₹{pnl - charges:.2f}" if charges > 0 else ""
+        self._log_txn("BUY", symbol, qty, ltp, pnl - charges,
+                       f"Product={product_type} | ID={trade.trade_id}{charge_note}")
+
+        return {"s": "ok", "message": "DEMO BUY executed", "id": trade.trade_id}
+
+    def sell(self, symbol: str, qty: int, product_type: str = "MARGIN") -> dict:
+        """Simulate a SELL order."""
+        ts = datetime.now()
+        ltp = float(self._get_ltp(symbol))
+        qty = int(qty)
+
+        if ltp <= 0:
+            return {"s": "error", "message": "Price not available"}
+
+        key = f"{symbol}_{product_type}"
+        pnl = 0.0
+        charges = 0.0
+        order_type = "ENTRY"
+
+        with self._lock:
+            self._symbol_order_count[key] = self._symbol_order_count.get(key, 0) + 1
+
+            if key in self.demo_positions:
+                pos = self.demo_positions[key]
+
+                if pos.side == 1:
+                    close_qty = min(qty, pos.qty)
+                    pnl = (ltp - pos.avg_price) * close_qty
+                    remaining = pos.qty - close_qty
+                    order_type = "EXIT" if remaining == 0 else "PARTIAL_EXIT"
+
+                    num_orders = self._symbol_order_count.get(key, 2)
+                    charges = estimate_trade_charges(close_qty, ltp, num_orders)
+
+                    if remaining <= 0:
+                        _cum_r = self._symbol_realized.get(key, 0.0) + pnl
+                        self._day_closed_positions[key] = {
+                            "symbol": symbol, "id": "", "netQty": 0,
+                            "netAvg": round(pos.avg_price, 2), "ltp": round(ltp, 2),
+                            "realized_profit": round(_cum_r, 2),
+                            "unrealized_profit": 0, "productType": product_type,
+                            "pl": round(_cum_r, 2), "qty": 0, "side": 0,
+                            "buyAvg": 0, "buyQty": 0, "sellAvg": 0, "sellQty": 0,
+                            "crossCurrency": "N", "rbiRefRate": 0,
+                            "qtyMulti_com": 1, "segment": 11, "exchange": "NSE",
+                            "slNo": 1, "fytoken": "",
+                            "cfBuyQty": 0, "cfSellQty": 0,
+                            "dayBuyQty": 0, "daySellQty": 0,
+                        }
+                        del self.demo_positions[key]
+                        self._symbol_order_count.pop(key, None)
+                    else:
+                        pos.qty = remaining
+
+                    self._symbol_realized[key] = self._symbol_realized.get(key, 0.0) + pnl
+                    self.account.realized_pnl += (pnl - charges)
+                    self.account.current_balance += (pnl - charges)
+                    self.account.utilized_margin -= pos.avg_price * close_qty
+                    if (pnl - charges) > 0:
+                        self.account.winning_trades += 1
+                    else:
+                        self.account.losing_trades += 1
+
+                    leftover = qty - close_qty
+                    if leftover > 0:
+                        self.demo_positions[key] = DemoPosition(
+                            symbol=symbol, qty=leftover, side=-1,
+                            avg_price=ltp, product_type=product_type,
+                            entry_time=ts.isoformat(), ltp=ltp,
+                        )
+                        self.account.utilized_margin += ltp * leftover
+
+                elif pos.side == -1:
+                    total_qty = pos.qty + qty
+                    pos.avg_price = (pos.avg_price * pos.qty + ltp * qty) / total_qty
+                    pos.qty = total_qty
+                    pos.ltp = ltp
+                    self.account.utilized_margin += ltp * qty
+            else:
+                self.demo_positions[key] = DemoPosition(
+                    symbol=symbol, qty=qty, side=-1,
+                    avg_price=ltp, product_type=product_type,
+                    entry_time=ts.isoformat(), ltp=ltp,
+                )
+                self.account.utilized_margin += ltp * qty
+
+            self.account.total_trades += 1
+            self._save_positions()
+            self._save_account()
+            self._save_symbol_realized()
+
+        trade = DemoTrade(
+            trade_id=str(uuid.uuid4())[:8], symbol=symbol, side=-1,
+            qty=qty, price=ltp, product_type=product_type,
+            timestamp=ts.isoformat(), order_type=order_type, pnl=pnl,
+        )
+        self._record_trade(trade)
+
+        action_label = "SELL (EXIT)" if pnl != 0 else "SELL (SHORT)"
+        charge_note = f" | charges=₹{charges:.2f} net=₹{pnl - charges:.2f}" if charges > 0 else ""
+        self._log_txn(action_label, symbol, qty, ltp, pnl - charges,
+                       f"Product={product_type} | ID={trade.trade_id}{charge_note}")
+
+        return {"s": "ok", "message": "DEMO SELL executed",
+                "id": trade.trade_id, "pnl": pnl - charges}
+
+    # ╔══════════════════════════════════════════════════════════════════════════╗
+    # ║  POSITION / FUNDS / CLOSE — SIMULATED                                   ║
+    # ╚══════════════════════════════════════════════════════════════════════════╝
+
+    def position(self) -> Tuple[pd.DataFrame, OverallPosition]:
+        """Return (position_df, overall) matching the same signature as Fyers.position()."""
+        total_unrealized = 0.0
+        rows: list[dict] = []
+
+        for pos in self.demo_positions.values():
+            ltp = self._get_ltp(pos.symbol)
+            pos.ltp = ltp
+
+            if pos.side == 1:
+                unrealized = round((ltp - pos.avg_price) * pos.qty, 2)
+            else:
+                unrealized = round((pos.avg_price - ltp) * pos.qty, 2)
+            pos.unrealized_pl = unrealized
+            total_unrealized += unrealized
+
+            _sym_key = f"{pos.symbol}_{pos.product_type}"
+            _cum_realized = self._symbol_realized.get(_sym_key, 0.0)
+            if isinstance(_cum_realized, str):
+                _cum_realized = 0.0
+
+            rows.append({
+                "symbol": pos.symbol,
+                "id": pos.position_id,
+                "buyAvg": round(pos.avg_price, 2) if pos.side == 1 else 0,
+                "buyQty": pos.qty if pos.side == 1 else 0,
+                "sellAvg": round(pos.avg_price, 2) if pos.side == -1 else 0,
+                "sellQty": pos.qty if pos.side == -1 else 0,
+                "netAvg": round(pos.avg_price, 2),
+                "netQty": pos.qty * pos.side,
+                "side": pos.side,
+                "qty": pos.qty,
+                "productType": pos.product_type,
+                "realized_profit": round(_cum_realized, 2),
+                "pl": round(_cum_realized + unrealized, 2),
+                "crossCurrency": "N",
+                "rbiRefRate": 0,
+                "qtyMulti_com": 1,
+                "segment": 11,
+                "exchange": "NSE",
+                "unrealized_profit": round(unrealized, 2),
+                "slNo": 1,
+                "ltp": round(ltp, 2),
+                "fytoken": "",
+                "cfBuyQty": 0,
+                "cfSellQty": 0,
+                "dayBuyQty": pos.qty if pos.side == 1 else 0,
+                "daySellQty": pos.qty if pos.side == -1 else 0,
+            })
+
+        # Include closed positions for dashboard
+        for key, closed_row in self._day_closed_positions.items():
+            if key not in self.demo_positions:
+                _cum_r = self._symbol_realized.get(key, 0.0)
+                if isinstance(_cum_r, str):
+                    _cum_r = 0.0
+                closed_row["realized_profit"] = round(_cum_r, 2)
+                closed_row["pl"] = round(_cum_r, 2)
+                rows.append(closed_row)
+
+        df = pd.DataFrame(rows, columns=POSITION_COL) if rows else pd.DataFrame(columns=POSITION_COL)
+
+        overall = OverallPosition(
+            count_total=len(self.demo_positions),
+            count_open=len(self.demo_positions),
+            pl_total=round(self.account.realized_pnl + total_unrealized, 2),
+            pl_realized=round(self.account.realized_pnl, 2),
+            pl_unrealized=round(total_unrealized, 2),
+        )
+        return df, overall
+
+    def funds(self) -> dict:
+        """Simulated funds response."""
+        total_unrealized = 0.0
+        for pos in self.demo_positions.values():
+            ltp = self._get_ltp(pos.symbol)
+            if pos.side == 1:
+                total_unrealized += (ltp - pos.avg_price) * pos.qty
+            else:
+                total_unrealized += (pos.avg_price - ltp) * pos.qty
+        total_unrealized = round(total_unrealized, 2)
+        self.account.unrealized_pnl = total_unrealized
+
+        return {
+            "s": "ok",
+            "fund_limit": [
+                {"id": 1, "title": "Total Balance",
+                 "equityAmount": round(self.account.current_balance, 2), "commodityAmount": 0},
+                {"id": 2, "title": "Utilized Amount",
+                 "equityAmount": round(self.account.utilized_margin, 2), "commodityAmount": 0},
+                {"id": 3, "title": "Available Balance",
+                 "equityAmount": round(self.account.current_balance - self.account.utilized_margin, 2),
+                 "commodityAmount": 0},
+                {"id": 4, "title": "Realized P&L",
+                 "equityAmount": round(self.account.realized_pnl, 2), "commodityAmount": 0},
+                {"id": 5, "title": "Unrealized P&L",
+                 "equityAmount": round(total_unrealized, 2), "commodityAmount": 0},
+                {"id": 6, "title": "Initial Balance",
+                 "equityAmount": round(self.account.initial_balance, 2), "commodityAmount": 0},
+            ],
+        }
+
+    def tradebook(self) -> pd.DataFrame:
+        rows = []
+        for t in self.trades:
+            rows.append({
+                "symbol": t.symbol, "row": 1,
+                "orderDateTime": t.timestamp, "orderNumber": t.trade_id,
+                "tradeNumber": t.trade_id, "tradePrice": t.price,
+                "tradeValue": t.price * t.qty, "tradedQty": t.qty,
+                "side": t.side, "productType": t.product_type,
+                "exchangeOrderNo": t.trade_id, "segment": 11,
+                "exchange": "NSE", "fyToken": "",
+                "orderTag": t.symbol.split(":")[1] if ":" in t.symbol else t.symbol,
+            })
+        return pd.DataFrame(rows, columns=TRADE_COLS) if rows else pd.DataFrame(columns=TRADE_COLS)
+
+    def orderbook(self) -> pd.DataFrame:
+        return pd.DataFrame(columns=ORDER_COLS)
+
+    def close_by_id(self, symbol: str, product_type: str = "MARGIN") -> dict:
+        key = f"{symbol}_{product_type}"
+        if key in self.demo_positions:
+            pos = self.demo_positions[key]
+            if pos.side == 1:
+                return self.sell(symbol, pos.qty, product_type)
+            else:
+                return self.buy(symbol, pos.qty, product_type)
+        return {"s": "error", "message": "Position not found"}
+
+    def close_all(self) -> list[dict]:
+        results = []
+        for pos in list(self.demo_positions.values()):
+            if pos.side == 1:
+                results.append(self.sell(pos.symbol, pos.qty, pos.product_type))
+            else:
+                results.append(self.buy(pos.symbol, pos.qty, pos.product_type))
+        return results
+
+    def reset_account(self, initial_balance: float | None = None) -> None:
+        """Reset the demo account to starting state."""
+        bal = initial_balance or self.initial_balance
+        self.account = DemoAccount(
+            initial_balance=bal, current_balance=bal,
+            last_updated=datetime.now().isoformat(),
+        )
+        self.demo_positions = {}
+        self.trades = []
+        self._save_account()
+        self._save_positions()
+        self._save_trades()

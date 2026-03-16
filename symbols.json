@@ -1,0 +1,12 @@
+{
+    "indices" : [
+        {
+            "symbol" : "NIFTY",
+            "indices": "NSE:NIFTY50-INDEX",
+            "qty_times" : 1,
+            "hedge" : 500
+        }
+    ],
+    "max_balance_usage": 100000,
+    "brake" : 0
+}
