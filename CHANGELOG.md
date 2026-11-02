@@ -7,6 +7,17 @@ Format: `YYYY-MM-DD` — change — _why_.
 
 ---
 
+## 2026-11-02 — Server launchers modelled on Alcadeias (.bat)
+
+- Rewrote `start_app.bat` + `start_dashboard.bat` to match the Alcadeias
+  `start_btcusd.bat` / `start_dashboard.bat` pattern for server/Jenkins runs:
+  hardcoded Python 3.11 root (`C:\Users\Administrator\...\Python311`), UTF-8 (Jenkins),
+  deps-install-once via flag files, and run the app **directly** (its own loop runs
+  forever; the server/Jenkins manages restart — no bat-level restart loop).
+- **Demo mode removed** from launchers (one engine process runs all symbols as threads;
+  no `%MODE%` / demo-vs-live branching).
+- `.gitignore`: added `dash_installed.flag`.
+
 ## 2026-11-02 — Unit tier step ₹50K → ₹1L + live shadow dry run
 
 - **Tier step 50,000 → 100,000**: `units = floor(bal/1L)+1` → `<1L`=1 lot, `1L–2L`=2, `2L–3L`=3.
