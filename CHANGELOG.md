@@ -7,6 +7,14 @@ Format: `YYYY-MM-DD` — change — _why_.
 
 ---
 
+## 2026-11-02 — Committed + live dry-run checklist
+
+- **Committed the `fyers_live` branch** (`3b8478d`) — full engine + trading + dashboard.
+  Not pushed; no live orders placed.
+- **Added `LIVE_DRYRUN.md`** — safety-first checklist for the first real-money
+  validation (minimum size via `unit_max_limit:1`, kill switches, what to watch,
+  known rough edges, stop criteria). Live run stays gated on the user.
+
 ## 2026-11-02 — Trading Increment 3: dashboard (done & verified)
 
 - **Added `dashboard.py`** — trimmed read-only Dash app (separate process, D1/D2):
