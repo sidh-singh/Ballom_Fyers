@@ -54,6 +54,7 @@ class EngineContext:
     holidays: set = field(default_factory=set)
     special_sessions: list = field(default_factory=list)
     option_df: object = None
+    commodity_df: object = None
 
     def is_trading_day(self, d: date) -> bool:
         """Weekend + NSE-holiday aware (special sessions override)."""
@@ -106,11 +107,19 @@ def _ensure_auth(auth: FyersAuth) -> bool:
             return False
 
 
-def daily_maintenance(ctx: EngineContext, reauth: bool) -> None:
-    """Re-auth (optional) + re-download CSV + refresh holidays (pt 1)."""
+def daily_maintenance(ctx: EngineContext, reauth: bool, config: dict | None = None) -> None:
+    """Re-auth (optional) + re-download CSV(s) + refresh holidays (pt 1)."""
     if reauth:
         ctx.auth.get_model(force=True)
     ctx.option_df = FyersAPI.download_option_data()
+
+    # MCX commodity master — only when a commodity symbol is enabled
+    if config and any(s.get("asset_type") == "COMMODITY" and s.get("enabled")
+                      for s in config.get("symbols", [])):
+        try:
+            ctx.commodity_df = FyersAPI.download_commodity_data()
+        except Exception as e:
+            logger.warning("commodity CSV download failed: %s", e)
 
     today = today_ist()
     # Holidays: load (cached). Fetch is automatic on cache-miss.
@@ -168,7 +177,7 @@ def main() -> None:
         return
     auth.start_heartbeat()
     try:
-        daily_maintenance(ctx, reauth=False)
+        daily_maintenance(ctx, reauth=False, config=config)
     except Exception as e:
         logger.exception("Initial daily_maintenance failed: %s", e)
 
@@ -192,7 +201,7 @@ def main() -> None:
             # daily maintenance window (~00:10) — pt 1
             if not did_maintenance_today and now.time() >= DAILY_MAINTENANCE_AT:
                 try:
-                    daily_maintenance(ctx, reauth=True)
+                    daily_maintenance(ctx, reauth=True, config=config)
                     did_maintenance_today = True
                     log_strategy_event("SYSTEM", "LOOP1", "DAILY_MAINTENANCE_OK")
                 except Exception as e:

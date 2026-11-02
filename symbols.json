@@ -6,25 +6,30 @@
             "underlying": "NSE:NIFTY50-INDEX",
             "step_up_balance": 50000,
             "unit_max_limit": 10,
+            "hedge_per_unit": 100,
             "enabled": true
         },
         {
             "symbol": "GOLD",
             "asset_type": "COMMODITY",
-            "underlying": "MCX:GOLD-INDEX",
+            "root": "GOLD",
+            "underlying": "MCX:GOLD-FUT",
             "step_up_balance": 50000,
             "unit_max_limit": 10,
+            "hedge_per_unit": 100,
             "enabled": false,
-            "_note": "TODO: confirm exact Fyers MCX underlying/symbol (ARCHITECTURE O2)"
+            "_note": "Future symbol + session resolved from MCX CSV by root. Before enabling: (1) confirm Fyers optionchain works for the resolved MCX future, (2) tune hedge_per_unit for GOLD premiums (lot_size=1, ₹100 target may be too small)."
         },
         {
             "symbol": "SILVER",
             "asset_type": "COMMODITY",
-            "underlying": "MCX:SILVER-INDEX",
+            "root": "SILVER",
+            "underlying": "MCX:SILVER-FUT",
             "step_up_balance": 50000,
             "unit_max_limit": 10,
+            "hedge_per_unit": 100,
             "enabled": false,
-            "_note": "TODO: confirm exact Fyers MCX underlying/symbol (ARCHITECTURE O2)"
+            "_note": "Same as GOLD — confirm optionchain + tune hedge_per_unit before enabling."
         }
     ],
     "max_balance_usage": 100000,

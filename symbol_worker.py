@@ -61,6 +61,10 @@ class SymbolWorker(threading.Thread):
         self.underlying = cfg["underlying"]
         self.step_up = cfg.get("step_up_balance", STEP_UP_BALANCE)
         self.max_limit = cfg.get("unit_max_limit", UNIT_MAX_LIMIT)
+        self.root = cfg.get("root", self.symbol)                 # commodity root (GOLD/SILVER)
+        self.hedge_per_unit = cfg.get("hedge_per_unit", HEDGE_PER_UNIT)
+        self._active_underlying = self.underlying                # resolved per tick for commodity
+        self._session = None                                     # (open, close) from MCX CSV
         self.ctx = ctx
         self.indicator = Indicator()
         self.strategy = Strategy()
@@ -85,6 +89,7 @@ class SymbolWorker(threading.Thread):
     def _tick(self) -> None:
         if self.ctx.brake_event.is_set():
             return
+        self._resolve_underlying()
         if not self.ctx.is_trading_day(now_ist().date()):
             return
         if not self._in_window():
@@ -117,7 +122,7 @@ class SymbolWorker(threading.Thread):
         if self.active is None:
             bal = self.ctx.api.get_balance()
             self.units = max(1, min(int(bal // self.step_up) + 1, self.max_limit))
-            return None, None, float(HEDGE_PER_UNIT * self.units), 0
+            return None, None, float(self.hedge_per_unit * self.units), 0
 
         leg_sym = self.active["symbol"]
         pos = self.ctx.api.get_position(leg_sym)
@@ -127,7 +132,7 @@ class SymbolWorker(threading.Thread):
         mg = self.ctx.tracker.get_martingale_count(leg_sym)
         count = mg + 1
         charges = estimate_trade_charges(net or 1, ltp or 1, num_orders=2 + mg)
-        threshold = float(HEDGE_PER_UNIT * self.units + charges)
+        threshold = float(self.hedge_per_unit * self.units + charges)
         leg = {"count": count, "total_profit": cycle, "total_volume": net,
                "first_profit": cycle, "last_profit": cycle,
                "first_volume": net, "last_volume": net}
@@ -231,7 +236,7 @@ class SymbolWorker(threading.Thread):
     def _index_candles(self):
         try:
             return self.ctx.api.fetch_historical_data(
-                self.underlying, SHA_TIMEFRAME, SHA_CANDLE_COUNT, market_type=self.asset_type)
+                self._active_underlying, SHA_TIMEFRAME, SHA_CANDLE_COUNT, market_type=self.asset_type)
         except Exception as e:
             logger.warning("[%s] index candle fetch failed: %s", self.symbol, e)
             return None
@@ -279,14 +284,32 @@ class SymbolWorker(threading.Thread):
         return d
 
     def _lot_size(self, leg_sym: str):
+        df = self.ctx.commodity_df if self.asset_type == "COMMODITY" else self.ctx.option_df
         try:
-            return FyersAPI.get_lot_size(leg_sym, self.ctx.option_df)
+            return FyersAPI.get_lot_size(leg_sym, df)
         except Exception as e:
             log_strategy_event(self.symbol, "-", "LOT_ERROR", details=f"{leg_sym}: {e}")
             return None
 
+    def _resolve_underlying(self) -> None:
+        """For COMMODITY, resolve the active FUTURE symbol + session from the MCX CSV
+        (DST-correct). For INDEX, the configured underlying is used as-is."""
+        if self.asset_type != "COMMODITY":
+            self.cfg["_resolved_underlying"] = self.underlying
+            return
+        df = getattr(self.ctx, "commodity_df", None)
+        if df is None:
+            return
+        res = FyersAPI.resolve_commodity(self.root, df)
+        if res:
+            self._active_underlying, self._session = res
+            self.cfg["_resolved_underlying"] = self._active_underlying
+
     # ── misc ────────────────────────────────────────────────────────────────
     def _in_window(self) -> bool:
+        if self.asset_type == "COMMODITY" and self._session:
+            o, c = self._session
+            return o <= now_ist().time() <= c
         hrs = MARKET_HOURS.get(self.asset_type, MARKET_HOURS["INDEX"])
         return hrs["open"] <= now_ist().time() <= hrs["close"]
 

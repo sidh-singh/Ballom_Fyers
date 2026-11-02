@@ -196,7 +196,7 @@ Integration: `fyers_api` routes every Fyers SDK call through
 | Asset type | Open | Close | Entry cutoff | Notes |
 |------------|------|-------|--------------|-------|
 | `INDEX` (NFO) | 09:15 | 15:30 | 15:15 | NSE F&O; owner's "3:15" treated as cutoff (confirm) |
-| `COMMODITY` (MCX non-agri) | 09:00 | 23:30 / 23:55 | TBD | 23:30 US-DST Mar–Nov; 23:55 Nov–Mar. Pre-open 08:45 |
+| `COMMODITY` (MCX non-agri) | 09:00 | 23:30 / 23:55 | TBD | **session read live from the MCX CSV** (DST-correct; 23:55 now). Pre-open 08:45 |
 
 Times are IST. **All datetime logic must be timezone-aware (IST)** — the old
 code used naive `datetime.now()`, which silently breaks on non-IST hosts; the
@@ -256,13 +256,14 @@ two-loop engine, per-symbol workers, HAM strategy + indicators (1:1 Alcadeias,
 verified identical), netting execution + booked-profit, trimmed dashboard.
 
 **Remaining:**
-- **Improved option-pair scan** (pt 7–8) — `scanner.py` currently reuses `fetch_option_pair`.
 - **Live dry-run** on a funded account — user-gated (real orders); confirming the
   tradebook fill price is the key item.
-- Commodity symbols / timings (O4).
+- **Enable commodities** — GOLD/SILVER are wired (future symbol + session auto-resolved
+  from the MCX CSV) but `enabled:false`; flip on after a live optionchain confirm for MCX
+  futures + `hedge_per_unit` tuning for commodity premiums.
 
-_Live hardening done 2026-11-02: self-tracked cost-basis carry model, H6 RSI resample,
-per-bar RSI caching, configurable balance basis — see CHANGELOG._
+_Done 2026-11-02 (see CHANGELOG): cost-basis carry model, H6 resample, per-bar RSI caching,
+configurable balance basis, carry-tuned scan (pt 7–8), commodity plumbing._
 
 ---
 

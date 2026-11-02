@@ -201,4 +201,6 @@ Reproduce the **Alcadeias MT5 chart** (`_alc_ref/dashboard.py:_build_daily_chart
   **index** (`NSE:NIFTY50-INDEX`); bullish→CE, bearish→PE. Commodity uses its own index.
 - **O3 — ladder depth 6** (5 RSI adds M1/M5/M15/H1/H4 + H6 forced close): taken as
   decided per "100% exact Alcadeias".
-- **O4 — commodity timings / symbols** still pending (ARCHITECTURE O1–O3).
+- **O4 — commodities** wired: GOLD/SILVER futures + session auto-resolved from the MCX
+  master CSV (DST-correct). `enabled:false` until a live optionchain confirm + `hedge_per_unit`
+  tuning (GOLD lot_size=1 → ₹100/unit target likely too small).

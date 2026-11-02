@@ -7,6 +7,21 @@ Format: `YYYY-MM-DD` — change — _why_.
 
 ---
 
+## 2026-11-02 — Commodities wired (GOLD/SILVER, verified vs MCX master)
+
+- **`fyers_api.py`**: `download_commodity_data()` (MCX_COM.csv cache), `resolve_commodity(root)`
+  → nearest non-expired FUTURE symbol + **session parsed from the CSV** (DST-correct),
+  `_parse_mcx_session()`.
+- **`symbol_worker.py`**: COMMODITY resolves the active future each tick (signal source +
+  optionchain underlying), uses the MCX CSV for lot size, its CSV session for the window,
+  and a per-symbol `hedge_per_unit`.
+- **`application.py`**: downloads the MCX master in daily maintenance when a commodity is enabled.
+- **`symbols.json`**: GOLD/SILVER by `root` + `hedge_per_unit`; **kept `enabled:false`** pending
+  (1) a live Fyers optionchain confirm for MCX futures and (2) `hedge_per_unit` tuning
+  (GOLD lot_size=1, so ₹100 target is likely too small).
+- **Verified** vs the real MCX master: GOLD→`MCX:GOLD26DECFUT`, SILVER→`MCX:SILVER26DECFUT`,
+  session 09:00–23:55; worker resolve/window correct; full engine imports.
+
 ## 2026-11-02 — Improved option-pair scan (pts 7–8, done & verified)
 
 - **Rewrote `scanner.py`** — carry-oriented, self-contained CE/PE selection via

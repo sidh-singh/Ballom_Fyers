@@ -30,7 +30,7 @@ from fyers_auth import FyersAuth
 from api_meter import meter
 from constants import (
     CACHE_DIR, SYMBOLS_COLS, MIN_CANDLES_FOR_ANALYSIS, PRODUCT_TYPE,
-    BALANCE_SOURCE_TITLES,
+    BALANCE_SOURCE_TITLES, MCX_COM_URL,
 )
 
 warnings.filterwarnings("ignore")
@@ -198,6 +198,55 @@ class FyersAPI:
                     f.unlink(missing_ok=True)
             logger.info("NSE F&O CSV cached: %s (%d rows)", cache_file.name, len(df))
         return df
+
+    @staticmethod
+    def download_commodity_data() -> pd.DataFrame:
+        """Download MCX commodity symbol CSV once per day; cache on C:."""
+        today = datetime.now().strftime("%Y%m%d")
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        cache_file = CACHE_DIR / f"fyers_mcx_{today}.csv"
+        if cache_file.exists():
+            return pd.read_csv(cache_file)
+        logger.info("Downloading MCX commodity CSV...")
+        df = pd.read_csv(MCX_COM_URL, header=None)
+        df.columns = SYMBOLS_COLS
+        df = df.drop_duplicates()
+        df.to_csv(cache_file, index=False)
+        for f in CACHE_DIR.glob("fyers_mcx_*.csv"):
+            if today not in f.name:
+                f.unlink(missing_ok=True)
+        logger.info("MCX CSV cached: %s (%d rows)", cache_file.name, len(df))
+        return df
+
+    @staticmethod
+    def _parse_mcx_session(session: str):
+        """'0900-2355|1815-1915:' → (time(9,0), time(23,55)); None on error."""
+        try:
+            seg = str(session).split("|")[0].strip().rstrip(":")
+            o, c = seg.split("-")
+            return dt_time(int(o[:2]), int(o[2:])), dt_time(int(c[:2]), int(c[2:]))
+        except Exception:
+            return None
+
+    @staticmethod
+    def resolve_commodity(root: str, mcx_df: pd.DataFrame):
+        """Resolve a commodity root (e.g. 'GOLD') → (nearest non-expired FUTURE
+        symbol, (open_time, close_time)) from the MCX CSV. DST-correct because the
+        session is read from the CSV. None if not found."""
+        try:
+            fut = mcx_df[(mcx_df["Underlying symbol"].astype(str) == root)
+                         & (mcx_df["Option type"].astype(str) == "XX")].copy()
+            if fut.empty:
+                return None
+            fut["_exp"] = pd.to_datetime(fut["Expiry date"], unit="s", errors="coerce")
+            fut = fut[fut["_exp"] >= pd.Timestamp.now()].sort_values("_exp")
+            if fut.empty:
+                return None
+            row = fut.iloc[0]
+            return str(row["Symbol ticker"]), FyersAPI._parse_mcx_session(row.get("Trading Session", ""))
+        except Exception as e:
+            logger.warning("resolve_commodity(%s) failed: %s", root, e)
+            return None
 
     # ╔══════════════════════════════════════════════════════════════════════════╗
     # ║  LOT SIZE LOOKUP                                                         ║
