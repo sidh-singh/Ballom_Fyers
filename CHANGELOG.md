@@ -7,6 +7,28 @@ Format: `YYYY-MM-DD` — change — _why_.
 
 ---
 
+## 2026-11-02 — Trading Increment 4: live hardening (done & verified)
+
+- **Cost-basis P&L model** (`position_tracker.py`): replaced intraday
+  `pl − booked_profit` with self-tracked `cycle_pl = ltp×net_qty − cost_basis`
+  — carry/overnight-safe and immune to same-day re-entry blending. Cost basis is
+  built from fills, preserved across day-change for open legs, and seeded from the
+  broker avg when adopting a carried position.
+- **Accurate fills**: added `fyers_api.tradebook()` + `last_fill_price()`; the worker
+  records cost basis from the actual traded price (fallback ltp).
+- **H6 RSI resample**: `symbol_worker._resample` builds 6-hour bars from 60-min
+  (360 isn't a native Fyers resolution).
+- **Per-bar RSI cache**: RSI per timeframe cached with TTL = bar duration (H1 hourly,
+  H4 4-hourly, H6 6-hourly) → large cut to the DATA budget.
+- **Configurable balance basis**: `BALANCE_SOURCE_TITLES` (Total → Available);
+  `get_balance` tries them in priority order.
+- **Verified** (mock API, Py3.11): cost-basis ENTRY/ADD/CLOSE (realized ₹1560), RSI
+  cache (1 fetch then cached), H6 resample, get_balance priority; full engine imports.
+
+### Remaining
+- Improved option-pair scan (pt 7–8); user-gated live dry-run (confirm tradebook fill
+  price); commodities (O4).
+
 ## 2026-11-02 — Committed + live dry-run checklist
 
 - **Committed the `fyers_live` branch** (`3b8478d`) — full engine + trading + dashboard.

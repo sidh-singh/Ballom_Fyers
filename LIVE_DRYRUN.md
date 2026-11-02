@@ -46,14 +46,15 @@
 - [ ] The engine **adopts** any position you leave open on restart (`_recover_active`) and will
       try to manage/close it — so flatten manually if you don't want it managed.
 
-## 5. Known rough edges to watch this run (see TRADING_LOGIC.md §5–7)
-- [ ] **H6 RSI** currently falls back to 240-min (360 isn't a native Fyers resolution) — the
-      final forced-close trigger is approximate until the resample is added.
-- [ ] **Overnight carry:** if you hold past 15:30, verify next day that `effective_pl` is sane
-      (the carry fix preserves `booked_profit`, but Fyers' overnight `pl` needs eyeballing).
-- [ ] **Balance basis:** `get_balance()` reads the "Total Balance" funds row — confirm that's the
-      tier basis you want (vs available margin).
-- [ ] **API budget:** if the meter nears limits it throttles; watch for any real `-429` in logs.
+## 5. Watch this run (most rough edges now hardened — TRADING_LOGIC.md §5–7)
+- [ ] **Fill prices (KEY):** cost basis uses the tradebook fill price (fallback ltp).
+      Confirm `last_fill_price` returns the real traded price on your account — if it
+      silently falls back to ltp, booked P&L can be off by the bid/ask spread.
+- [ ] **Overnight carry:** now a self-tracked cost basis preserved across midnight; still
+      eyeball day-2 `cycle_pl` once against the Fyers positions screen.
+- [ ] **Balance basis:** `BALANCE_SOURCE_TITLES` = Total → Available — confirm the tier
+      uses the balance you intend.
+- [ ] **API budget:** meter throttles; H1/H4/H6 RSI are cached per bar. Watch for real `-429`.
 
 ## 6. Stop criteria (abort the run if)
 - any order rejects repeatedly; `netQty` doesn't match what the tracker thinks; effective_pl looks

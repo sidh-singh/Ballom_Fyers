@@ -181,6 +181,10 @@ HEDGE_PER_UNIT       = 100      # ₹ profit target per unit (Fyers analog of $1
 MAX_MARTINGALE_LEVEL = 5        # 5 RSI adds (M1/M5/M15/H1/H4), then H6 forced close
 PRODUCT_TYPE         = "MARGIN" # carry / overnight
 
+# Which funds() rows (title, lowercase substring, priority order) to read as the
+# balance that drives unit tiers. Confirm against your Fyers funds screen.
+BALANCE_SOURCE_TITLES = ["total balance", "available balance"]
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #  CHARGES / TAXES  (exact, from dev_trading constants.py)
 # ═══════════════════════════════════════════════════════════════════════════════

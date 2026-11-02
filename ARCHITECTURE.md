@@ -256,13 +256,13 @@ two-loop engine, per-symbol workers, HAM strategy + indicators (1:1 Alcadeias,
 verified identical), netting execution + booked-profit, trimmed dashboard.
 
 **Remaining:**
-- **Improved option-pair scan** (pt 7–8) — `scanner.py` currently reuses
-  `fetch_option_pair`.
-- **Live hardening** — H6 RSI resample (360-min not native), overnight `pl`
-  reconciliation for carried positions, per-bar RSI caching (DATA budget),
-  `get_balance` tier basis (Total vs Available).
-- **Live dry-run** on a funded account — user-gated (real orders).
+- **Improved option-pair scan** (pt 7–8) — `scanner.py` currently reuses `fetch_option_pair`.
+- **Live dry-run** on a funded account — user-gated (real orders); confirming the
+  tradebook fill price is the key item.
 - Commodity symbols / timings (O4).
+
+_Live hardening done 2026-11-02: self-tracked cost-basis carry model, H6 RSI resample,
+per-bar RSI caching, configurable balance basis — see CHANGELOG._
 
 ---
 

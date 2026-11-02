@@ -28,7 +28,10 @@ import requests
 
 from fyers_auth import FyersAuth
 from api_meter import meter
-from constants import CACHE_DIR, SYMBOLS_COLS, MIN_CANDLES_FOR_ANALYSIS, PRODUCT_TYPE
+from constants import (
+    CACHE_DIR, SYMBOLS_COLS, MIN_CANDLES_FOR_ANALYSIS, PRODUCT_TYPE,
+    BALANCE_SOURCE_TITLES,
+)
 
 warnings.filterwarnings("ignore")
 
@@ -121,6 +124,28 @@ class FyersAPI:
     def funds(self) -> dict:
         return self.safe_api_call(self.model.funds)
 
+    def tradebook(self) -> dict:
+        return self.safe_api_call(self.model.tradebook)
+
+    def last_fill_price(self, symbol: str) -> float | None:
+        """Most recent executed trade price for *symbol* from the tradebook
+        (used to record an accurate cost basis). None if unavailable."""
+        resp = self.tradebook()
+        if not isinstance(resp, dict) or resp.get("s") != "ok":
+            return None
+        trades = [t for t in resp.get("tradeBook", []) if t.get("symbol") == symbol]
+        if not trades:
+            return None
+        last = trades[-1]
+        for k in ("tradePrice", "tradedPrice", "tradeValue"):
+            v = last.get(k)
+            if v:
+                try:
+                    return float(v)
+                except (TypeError, ValueError):
+                    continue
+        return None
+
     def get_position(self, symbol: str, product_type: str = PRODUCT_TYPE) -> dict | None:
         """Net position row for *symbol* (or None if flat / error).
         Keys include: netQty, pl, ltp, netAvg, buyAvg, realized_profit, unrealized_profit."""
@@ -133,16 +158,19 @@ class FyersAPI:
         return None
 
     def get_balance(self) -> float:
-        """Total account balance (₹) from funds(); 0.0 on error. Drives unit tiers."""
+        """Account balance (₹) from funds() that drives unit tiers; 0.0 on error.
+        Tries BALANCE_SOURCE_TITLES in priority order (Total → Available)."""
         resp = self.funds()
         if not isinstance(resp, dict) or resp.get("s") != "ok":
             return 0.0
-        for row in resp.get("fund_limit", []):
-            if "total balance" in str(row.get("title", "")).lower():
-                try:
-                    return float(row.get("equityAmount", 0) or 0)
-                except (TypeError, ValueError):
-                    return 0.0
+        rows = resp.get("fund_limit", [])
+        for wanted in BALANCE_SOURCE_TITLES:
+            for row in rows:
+                if wanted in str(row.get("title", "")).lower():
+                    try:
+                        return float(row.get("equityAmount", 0) or 0)
+                    except (TypeError, ValueError):
+                        return 0.0
         return 0.0
 
     # ╔══════════════════════════════════════════════════════════════════════════╗

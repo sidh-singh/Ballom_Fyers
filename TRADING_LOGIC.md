@@ -142,18 +142,25 @@ added to the ₹100×units target so **net** booked profit ≥ ₹100×units.
 
 ---
 
-## 5. Carry / delivery handling (your point 8) — ⚠️ needs care
+## 5. Carry / delivery handling (your point 8) — ✅ handled
 
-Positions are **carried** (held overnight, product = MARGIN/NRML). This breaks one
-assumption in the existing intraday port:
-- `position_tracker.json` currently **wipes on day change** → `booked_profit` resets to 0.
-  For a position **carried across midnight**, that would mis-compute `effective_pl`.
-- **Fix in the port:** on day change, do **not** reset `booked_profit` for symbols that
-  still have an open `netQty`; only reset fully-closed symbols. (Or re-seed `booked_profit`
-  from the carried position's `pl` at the new day's first read.)
+Positions are **carried** (held overnight, product = MARGIN/NRML). To stay correct
+across the day boundary, `position_tracker.py` uses a **self-tracked cost-basis**
+model instead of Fyers' intraday `pl − booked_profit`:
 
-Also: the per-symbol worker's "scan once/day if flat; else manage/close first" rule
-(ARCHITECTURE §5) means a carried position is **managed to close before any new scan**.
+    cycle_pl = ltp × net_qty − cost_basis       # open-basket P&L, day-independent
+    realized = exit_price × net_qty − cost_basis
+
+`cost_basis`/`net_qty` are built from our own fills (fill price from the **tradebook**,
+fallback ltp) and are **preserved across day-change for any open leg** (only fully-closed
+legs reset). This is immune to the midnight reset and to Fyers' blended-average
+contamination after same-day re-entry. On restart, a carried position is adopted and its
+cost basis seeded from the broker avg.
+
+The worker's "scan once/day if flat; else manage/close first" rule (ARCHITECTURE §5)
+means a carried position is **managed to close before any new scan**.
+
+⚠️ Fill-price accuracy (tradebook) is the one item to confirm during the live dry-run.
 
 ---
 
@@ -180,8 +187,8 @@ Reproduce the **Alcadeias MT5 chart** (`_alc_ref/dashboard.py:_build_daily_chart
 | Signal source | per-leg CE/PE/idx (`signal_state.json`) | one instrument's SHA+RSI | **compute on the index** (⚠️ confirm §8 O2) |
 | Position sizing | `qty` from `option_pairs.json` (no tiers) | `units` from balance | **add balance-tier units** |
 | Close target | flat `hedge(500) + charges` | `units × target + charges` | **₹100 × units + charges** |
-| Day reset | wipes `booked_profit` | 24/7, carries | **keep booked_profit for carried legs** (§5) |
-| H6 RSI timeframe | n/a | 360-min | Fyers history max 240-min → **resample H6 from lower TF** |
+| Day reset / carry | wipes `booked_profit` | 24/7, carries | **self-tracked cost basis**, preserved across midnight ✓ (§5) |
+| H6 RSI timeframe | n/a | 360-min | **resampled from 60-min** (360 not native) ✓ |
 
 ---
 

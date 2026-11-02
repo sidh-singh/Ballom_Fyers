@@ -1,21 +1,28 @@
 """
 symbol_worker.py — one trading thread per symbol (Loop-2). ARCHITECTURE §5.
 
-Implements the HAM strategy on Fyers NETTING (buy-only), per TRADING_LOGIC.md:
-  • SHA signal + trend and multi-timeframe RSI are computed on the INDEX.
-  • Strategy BUY→CE leg, SELL→PE leg; BUY_MORE/SELL_MORE add+average; CLOSE sells.
-  • Per-cycle P&L via effective_pl = api_pl − booked_profit (PositionTracker).
-  • Balance-tiered units: entry = units×lot, adds = fib×units×lot.
-  • Close when effective_pl > HEDGE_PER_UNIT×units + charges (tax-aware).
+HAM strategy on Fyers NETTING (buy-only), per TRADING_LOGIC.md:
+  • SHA signal + trend and multi-timeframe RSI computed on the INDEX.
+  • BUY→CE leg, SELL→PE leg; BUY_MORE/SELL_MORE add+average; CLOSE sells.
+  • Per-cycle P&L via SELF-TRACKED cost basis (carry-safe):
+        cycle_pl = ltp*net_qty - cost_basis   (PositionTracker)
+  • Balance-tiered units; adds = fib×units×lot; close at 100×units + charges.
 
-⚠️ Opening/closing places REAL orders when run live. Several edges are marked
-TODO for live hardening (per-bar RSI caching, H6 resample, partial-fill retries).
+Live-hardening in this version:
+  • accurate cost basis from fill prices (tradebook, fallback ltp),
+  • H6 RSI resampled from 60-min (360 isn't a native Fyers resolution),
+  • per-bar RSI caching (TTL = bar duration) to respect the DATA budget,
+  • carried-position adoption seeds cost basis from the broker avg.
+
+⚠️ Places REAL orders when run live. Fill-price sourcing is the main thing to
+confirm during the dry-run (LIVE_DRYRUN.md).
 """
 
 from __future__ import annotations
 
 import logging
 import threading
+from time import monotonic
 
 from constants import (
     MARKET_HOURS, WORKER_IDLE_SLEEP, now_ist,
@@ -24,7 +31,7 @@ from constants import (
     RSI_LENGTH, RSI_MA_TYPE, RSI_CANDLE_COUNT,
     RSI_MTF_TIMEFRAMES, RSI_DCA_LADDER_TIMEFRAMES, RSI_FINAL_CLOSE_TIMEFRAME,
     TIMEFRAME_TO_FYERS_RES,
-    STEP_UP_BALANCE, UNIT_MAX_LIMIT, HEDGE_PER_UNIT, PRODUCT_TYPE,
+    STEP_UP_BALANCE, UNIT_MAX_LIMIT, HEDGE_PER_UNIT,
     estimate_trade_charges,
 )
 from indicator import Indicator
@@ -35,8 +42,14 @@ from state_writer import log_strategy_event
 
 logger = logging.getLogger("worker")
 
-# contracts-per-unit fib ladder (entry=fib[0], add at level L uses fib[L+1])
-FIB = [1, 2, 3, 5, 8, 13, 21, 34, 55, 89]
+FIB = [1, 2, 3, 5, 8, 13, 21, 34, 55, 89]       # contracts-per-unit ladder
+
+# RSI cache TTL per timeframe = how long until a new bar forms (seconds)
+_RES_SECONDS = {
+    "TIMEFRAME_M1": 60, "TIMEFRAME_M5": 300, "TIMEFRAME_M15": 900,
+    "TIMEFRAME_M30": 1800, "TIMEFRAME_H1": 3600, "TIMEFRAME_H4": 14400,
+    "TIMEFRAME_H6": 21600,
+}
 
 
 class SymbolWorker(threading.Thread):
@@ -54,7 +67,7 @@ class SymbolWorker(threading.Thread):
         self.units = 1
         self.active: dict | None = None     # {"side": "CE"|"PE", "symbol": leg_sym}
         self.pending_close = False
-        self._last_qty = 0
+        self._rsi_cache: dict = {}          # tf -> (monotonic_fetch_time, value)
 
     # ── thread main ─────────────────────────────────────────────────────────
     def run(self) -> None:
@@ -77,8 +90,7 @@ class SymbolWorker(threading.Thread):
         if not self._in_window():
             return
 
-        # finalize a close in progress first (pt 6: close-first priority)
-        if self.active and self.pending_close:
+        if self.active and self.pending_close:   # close-first priority (pt 6)
             self._confirm_close()
             if self.active:
                 return
@@ -92,60 +104,51 @@ class SymbolWorker(threading.Thread):
 
         buy_pos, sell_pos, close_threshold, count = self._leg_state_and_threshold()
         rsi_mtf = self._rsi_mtf(count)
-        rsi_1m = rsi_mtf.get("TIMEFRAME_M1", 50.0)
 
         buy_signal, sell_signal, _ = self.strategy.calculate_signal(
             source_df, sha, sha_trend, buy_pos, sell_pos, self.units,
-            close_threshold=close_threshold, rsi_value=rsi_1m, rsi_mtf=rsi_mtf,
+            close_threshold=close_threshold,
+            rsi_value=rsi_mtf.get("TIMEFRAME_M1", 50.0), rsi_mtf=rsi_mtf,
         )
         self._execute(buy_signal, sell_signal)
 
-    # ── leg state → strategy inputs ─────────────────────────────────────────
+    # ── leg state → strategy inputs (cost-basis P&L) ────────────────────────
     def _leg_state_and_threshold(self):
-        """Return (buy_positions, sell_positions, close_threshold, count)."""
         if self.active is None:
-            # flat → re-derive units from balance (Alcadeias: only when flat)
             bal = self.ctx.api.get_balance()
             self.units = max(1, min(int(bal // self.step_up) + 1, self.max_limit))
-            return None, None, HEDGE_PER_UNIT * self.units, 0
+            return None, None, float(HEDGE_PER_UNIT * self.units), 0
 
         leg_sym = self.active["symbol"]
         pos = self.ctx.api.get_position(leg_sym)
-        net_qty = abs(int(pos.get("netQty", 0))) if pos else 0
-        api_pl = float(pos.get("pl", 0.0)) if pos else 0.0
         ltp = float(pos.get("ltp", 0.0)) if pos else 0.0
-        eff_pl = self.ctx.tracker.get_effective_pl(leg_sym, api_pl)
+        cycle = self.ctx.tracker.cycle_pl(leg_sym, ltp)
+        net = self.ctx.tracker.get_net_qty(leg_sym)
         mg = self.ctx.tracker.get_martingale_count(leg_sym)
         count = mg + 1
-        charges = estimate_trade_charges(net_qty or 1, ltp or 1, num_orders=2 + mg)
-        threshold = HEDGE_PER_UNIT * self.units + charges
-
-        leg_dict = {
-            "count": count, "total_profit": eff_pl, "total_volume": net_qty,
-            "first_profit": eff_pl, "last_profit": eff_pl,
-            "first_volume": net_qty, "last_volume": net_qty,
-        }
+        charges = estimate_trade_charges(net or 1, ltp or 1, num_orders=2 + mg)
+        threshold = float(HEDGE_PER_UNIT * self.units + charges)
+        leg = {"count": count, "total_profit": cycle, "total_volume": net,
+               "first_profit": cycle, "last_profit": cycle,
+               "first_volume": net, "last_volume": net}
         if self.active["side"] == "CE":
-            return leg_dict, None, threshold, count
-        return None, leg_dict, threshold, count
+            return leg, None, threshold, count
+        return None, leg, threshold, count
 
-    # ── order execution ─────────────────────────────────────────────────────
+    # ── execution ───────────────────────────────────────────────────────────
     def _execute(self, buy_signal, sell_signal) -> None:
-        # FLAT → fresh entry (BUY=CE, SELL=PE)
         if self.active is None:
             if buy_signal == Signal.BUY:
                 self._open_leg("CE")
             elif sell_signal == Signal.SELL:
                 self._open_leg("PE")
             return
-
-        side = self.active["side"]
-        if side == "CE":
+        if self.active["side"] == "CE":
             if buy_signal == Signal.BUY_MORE:
                 self._add_leg()
             elif buy_signal == Signal.CLOSE_BUY:
                 self._close_leg()
-        else:  # PE
+        else:
             if sell_signal == Signal.SELL_MORE:
                 self._add_leg()
             elif sell_signal == Signal.CLOSE_SELL:
@@ -157,19 +160,19 @@ class SymbolWorker(threading.Thread):
             log_strategy_event(self.symbol, side, "SCAN_EMPTY", details="no pair for entry")
             return
         leg_sym = pair["CE_Symbol"] if side == "CE" else pair["PE_Symbol"]
+        premium = float(pair.get(f"{side}_Premium", 0) or 0)
         lot = self._lot_size(leg_sym)
         if not lot:
             return
         qty = self.units * lot
-        resp = self.ctx.api.buy(leg_sym, qty)
-        if not self._ok(resp):
-            log_strategy_event(self.symbol, side, "ENTRY_FAIL", qty=qty, details=str(resp)[:160])
+        if not self._ok(self.ctx.api.buy(leg_sym, qty)):
+            log_strategy_event(self.symbol, side, "ENTRY_FAIL", qty=qty)
             return
-        self.ctx.tracker.record_entry(leg_sym, qty, side=1 if side == "CE" else -1)
+        fill = self._fill_price(leg_sym, premium)
+        self.ctx.tracker.record_entry(leg_sym, qty, fill, side=1 if side == "CE" else -1)
         self.active = {"side": side, "symbol": leg_sym}
-        self._last_qty = qty
         log_strategy_event(self.symbol, side, "ENTRY", qty=qty,
-                           details=f"{leg_sym} units={self.units} lot={lot}")
+                           details=f"{leg_sym} units={self.units} fill~{fill}")
 
     def _add_leg(self) -> None:
         leg_sym = self.active["symbol"]
@@ -179,93 +182,101 @@ class SymbolWorker(threading.Thread):
         mg = self.ctx.tracker.get_martingale_count(leg_sym)
         add_qty = FIB[min(mg + 1, len(FIB) - 1)] * self.units * lot
         pos = self.ctx.api.get_position(leg_sym)
-        net_qty = abs(int(pos.get("netQty", 0))) if pos else 0
-        api_pl = float(pos.get("pl", 0.0)) if pos else 0.0
-        eff = self.ctx.tracker.get_effective_pl(leg_sym, api_pl)
-        resp = self.ctx.api.buy(leg_sym, add_qty)
-        if not self._ok(resp):
-            log_strategy_event(self.symbol, self.active["side"], "ADD_FAIL",
-                               qty=add_qty, details=str(resp)[:160])
+        ltp = float(pos.get("ltp", 0.0)) if pos else 0.0
+        if not self._ok(self.ctx.api.buy(leg_sym, add_qty)):
+            log_strategy_event(self.symbol, self.active["side"], "ADD_FAIL", qty=add_qty)
             return
-        self.ctx.tracker.record_martingale(leg_sym, add_qty, net_qty,
-                                           1 if self.active["side"] == "CE" else -1,
-                                           eff, api_pl)
-        self._last_qty = net_qty + add_qty
+        fill = self._fill_price(leg_sym, ltp)
+        self.ctx.tracker.record_add(leg_sym, add_qty, fill)
         log_strategy_event(self.symbol, self.active["side"], "ADD", qty=add_qty,
-                           details=f"{leg_sym} level={mg + 1}")
+                           details=f"{leg_sym} level={mg + 1} fill~{fill}")
 
     def _close_leg(self) -> None:
         leg_sym = self.active["symbol"]
         pos = self.ctx.api.get_position(leg_sym)
-        net_qty = abs(int(pos.get("netQty", 0))) if pos else 0
-        if net_qty == 0:
+        net = abs(int(pos.get("netQty", 0))) if pos else 0
+        if net == 0:
             self.pending_close = True
             self._confirm_close()
             return
-        resp = self.ctx.api.sell(leg_sym, net_qty)
-        if not self._ok(resp):
-            log_strategy_event(self.symbol, self.active["side"], "CLOSE_FAIL",
-                               qty=net_qty, details=str(resp)[:160])
+        if not self._ok(self.ctx.api.sell(leg_sym, net)):
+            log_strategy_event(self.symbol, self.active["side"], "CLOSE_FAIL", qty=net)
             return
-        self._last_qty = net_qty
         self.pending_close = True
-        log_strategy_event(self.symbol, self.active["side"], "CLOSE_SENT", qty=net_qty,
-                           details=leg_sym)
+        log_strategy_event(self.symbol, self.active["side"], "CLOSE_SENT", qty=net, details=leg_sym)
 
     def _confirm_close(self) -> None:
-        """Finalize a close: snapshot booked_profit once netQty == 0."""
         leg_sym = self.active["symbol"]
         pos = self.ctx.api.get_position(leg_sym)
-        net_qty = abs(int(pos.get("netQty", 0))) if pos else 0
-        if net_qty > 0:
-            # not flat yet → retry the close
-            self.ctx.api.sell(leg_sym, net_qty)
+        net = abs(int(pos.get("netQty", 0))) if pos else 0
+        if net > 0:
+            self.ctx.api.sell(leg_sym, net)      # retry until flat
             return
-        api_pl = float(pos.get("pl", 0.0)) if pos else 0.0
         ltp = float(pos.get("ltp", 0.0)) if pos else 0.0
-        avg = float(pos.get("netAvg", pos.get("buyAvg", 0.0))) if pos else 0.0
-        eff = self.ctx.tracker.get_effective_pl(leg_sym, api_pl)
-        self.ctx.tracker.record_close(leg_sym, api_pl, self._last_qty, eff,
-                                      ltp=ltp, avg_price=avg)
+        exit_px = self._fill_price(leg_sym, ltp)
+        realized = self.ctx.tracker.record_close(leg_sym, exit_px)
         log_strategy_event(self.symbol, self.active["side"], "CLOSE_BOOKED",
-                           qty=self._last_qty, pl=round(eff, 2),
-                           details=f"{leg_sym} booked={round(eff, 2)}")
+                           pl=round(realized, 2), details=f"{leg_sym} booked={round(realized, 2)}")
         self.active = None
         self.pending_close = False
+
+    def _fill_price(self, leg_sym: str, fallback_ltp: float) -> float:
+        """Actual fill price for cost basis: tradebook last trade, else ltp fallback."""
+        px = self.ctx.api.last_fill_price(leg_sym)
+        if px:
+            return px
+        return float(fallback_ltp or 0.0)
 
     # ── data helpers ────────────────────────────────────────────────────────
     def _index_candles(self):
         try:
             return self.ctx.api.fetch_historical_data(
-                self.underlying, SHA_TIMEFRAME, SHA_CANDLE_COUNT,
-                market_type=self.asset_type,
-            )
+                self.underlying, SHA_TIMEFRAME, SHA_CANDLE_COUNT, market_type=self.asset_type)
         except Exception as e:
             logger.warning("[%s] index candle fetch failed: %s", self.symbol, e)
             return None
 
     def _rsi_mtf(self, count: int) -> dict:
-        """Fetch ONLY the RSI timeframes needed this tick (budget-aware):
-        flat → entry-filter set; active → the ladder TF for `count` (+H6 at max)."""
+        """Fetch only the RSI timeframes needed this tick (budget-aware + cached)."""
         if self.active is None:
             needed = list(RSI_MTF_TIMEFRAMES)
         elif count <= len(RSI_DCA_LADDER_TIMEFRAMES):
             needed = [RSI_DCA_LADDER_TIMEFRAMES[count - 1]]
         else:
             needed = [RSI_FINAL_CLOSE_TIMEFRAME]
-        out: dict = {}
-        for tf in needed:
-            res = TIMEFRAME_TO_FYERS_RES.get(tf, "5")
-            try:
-                if res == "360":  # H6 not native → TODO resample from 60-min
-                    res = "240"
-                df = self.ctx.api.fetch_historical_data(
-                    self.underlying, res, RSI_CANDLE_COUNT, market_type=self.asset_type)
-                rsi = self.indicator.calculate_rsi(df["Close"], RSI_LENGTH, RSI_MA_TYPE)
-                out[tf] = float(rsi.iloc[-1]) if len(rsi) else 50.0
-            except Exception:
-                out[tf] = 50.0
-        return out
+        return {tf: self._rsi_one(tf) for tf in needed}
+
+    def _rsi_one(self, tf: str) -> float:
+        now = monotonic()
+        cached = self._rsi_cache.get(tf)
+        ttl = _RES_SECONDS.get(tf, 300)
+        if cached and (now - cached[0]) < ttl:      # per-bar cache → skip the fetch
+            return cached[1]
+        res = TIMEFRAME_TO_FYERS_RES.get(tf, "5")
+        resample = None
+        if res == "360":                             # H6 → resample from 60-min
+            res, resample = "60", "6h"
+        try:
+            df = self.ctx.api.fetch_historical_data(
+                self.underlying, res, RSI_CANDLE_COUNT, market_type=self.asset_type)
+            if resample is not None:
+                df = self._resample(df, resample)
+            rsi = self.indicator.calculate_rsi(df["Close"], RSI_LENGTH, RSI_MA_TYPE)
+            val = float(rsi.iloc[-1]) if len(rsi) else 50.0
+        except Exception:
+            val = cached[1] if cached else 50.0
+        self._rsi_cache[tf] = (now, val)
+        return val
+
+    @staticmethod
+    def _resample(df, rule: str):
+        d = (df.set_index("Timestamp")
+               .resample(rule)
+               .agg({"Open": "first", "High": "max", "Low": "min",
+                     "Close": "last", "Volume": "sum"})
+               .dropna()
+               .reset_index())
+        return d
 
     def _lot_size(self, leg_sym: str):
         try:
@@ -291,19 +302,24 @@ class SymbolWorker(threading.Thread):
                 and option_symbol_upper.startswith(("NSE:", "MCX:")))
 
     def _recover_active(self) -> None:
-        """Adopt a carried (overnight) position on startup so it's managed, not re-scanned."""
+        """Adopt a carried position on startup; seed cost basis from broker avg if untracked."""
         try:
             resp = self.ctx.api.positions()
             if not isinstance(resp, dict) or resp.get("s") != "ok":
                 return
             for row in resp.get("netPositions", []):
                 sym = str(row.get("symbol", "")).upper()
-                if int(row.get("netQty", 0)) != 0 and self._belongs(sym):
+                net = int(row.get("netQty", 0))
+                if net != 0 and self._belongs(sym):
                     side = "CE" if sym.endswith("CE") else ("PE" if sym.endswith("PE") else None)
-                    if side:
-                        self.active = {"side": side, "symbol": row.get("symbol")}
-                        self._last_qty = abs(int(row.get("netQty", 0)))
-                        logger.info("[%s] adopted carried %s %s", self.symbol, side, row.get("symbol"))
-                        return
+                    if not side:
+                        continue
+                    self.active = {"side": side, "symbol": row.get("symbol")}
+                    avg = float(row.get("netAvg", row.get("buyAvg", 0.0)) or 0.0)
+                    self.ctx.tracker.seed_from_broker(row.get("symbol"), abs(net), avg,
+                                                      1 if side == "CE" else -1)
+                    logger.info("[%s] adopted carried %s %s (avg~%s)",
+                                self.symbol, side, row.get("symbol"), avg)
+                    return
         except Exception as e:
             logger.warning("[%s] recover_active failed: %s", self.symbol, e)
