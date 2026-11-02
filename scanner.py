@@ -21,7 +21,7 @@ import math
 from datetime import datetime
 
 from constants import (
-    SCAN_STRIKE_COUNT, SCAN_MIN_DTE, SCAN_MAX_DTE, SCAN_MIN_OI, SCAN_MAX_PREMIUM,
+    SCAN_STRIKE_COUNT, SCAN_MIN_DTE, SCAN_MAX_DTE, SCAN_MIN_OI, SCAN_MAX_PREMIUM_PER_LOT,
 )
 
 logger = logging.getLogger("scanner")
@@ -29,6 +29,17 @@ logger = logging.getLogger("scanner")
 
 def _ok(r) -> bool:
     return isinstance(r, dict) and r.get("s") == "ok"
+
+
+def _lot(symbol: str, lot_df):
+    """Lot size for a leg symbol from the cached CSV; None if unknown (cap then skipped)."""
+    if lot_df is None or not symbol:
+        return None
+    try:
+        from fyers_api import FyersAPI
+        return FyersAPI.get_lot_size(symbol, lot_df)
+    except Exception:
+        return None
 
 
 def _moneyness(strike: float, spot: float, otype: str) -> float:
@@ -49,7 +60,7 @@ def _spread_eff(bid: float, ask: float) -> float:
     return max(0.0, 1 - (ask - bid) / mid) if mid > 0 else 0.0
 
 
-def _score(o: dict, spot: float, otype: str):
+def _score(o: dict, spot: float, otype: str, lot_size, max_per_lot: float):
     ltp = float(o.get("ltp", 0) or 0)
     oi = float(o.get("oi", 0) or 0)
     vol = float(o.get("volume", 0) or 0)
@@ -60,7 +71,7 @@ def _score(o: dict, spot: float, otype: str):
         return None
     if oi < SCAN_MIN_OI and vol <= 0:          # illiquid
         return None
-    if SCAN_MAX_PREMIUM and ltp > SCAN_MAX_PREMIUM:
+    if max_per_lot and lot_size and ltp * lot_size > max_per_lot:   # per-lot premium cap
         return None
     score = (_moneyness(strike, spot, otype) * 0.35
              + _spread_eff(bid, ask) * 0.25
@@ -70,10 +81,12 @@ def _score(o: dict, spot: float, otype: str):
     return score, strike, ltp
 
 
-def scan_best_pair(symbol_cfg: dict, api, meter=None) -> dict | None:
+def scan_best_pair(symbol_cfg: dict, api, meter=None, lot_df=None) -> dict | None:
     """Return {CE_Symbol, PE_Symbol, CE_Strike, PE_Strike, CE_Premium, PE_Premium,
-    Expiry, DTE, VIX} for a fresh basket, or None."""
+    Expiry, DTE, VIX} for a fresh basket, or None. Strikes whose premium × lot_size
+    exceeds the per-lot cap are skipped (needs lot_df)."""
     underlying = symbol_cfg.get("_resolved_underlying", symbol_cfg["underlying"])
+    max_per_lot = symbol_cfg.get("max_premium_per_lot", SCAN_MAX_PREMIUM_PER_LOT)
     model = api.model
     try:
         q = api.safe_api_call(model.quotes, data={"symbols": underlying})
@@ -118,7 +131,7 @@ def scan_best_pair(symbol_cfg: dict, api, meter=None) -> dict | None:
             for o in chain:
                 if o.get("option_type") != otype:
                     continue
-                s = _score(o, spot, otype)
+                s = _score(o, spot, otype, _lot(o.get("symbol", ""), lot_df), max_per_lot)
                 if s:
                     ranked.append((s[0], o, s[1], s[2]))
             if not ranked:

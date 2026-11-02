@@ -94,7 +94,7 @@ def main() -> None:
         print(f"  SIGNAL → buy={buy.name}  sell={sell.name}  (blocked={ad.get('rsi_mtf_blocked')})")
 
         s["_resolved_underlying"] = underlying
-        pair = scanner.scan_best_pair(s, api)
+        pair = scanner.scan_best_pair(s, api, lot_df=(commodity_df if atype == "COMMODITY" else option_df))
         if not pair:
             print("  SCAN → no pair returned")
             continue

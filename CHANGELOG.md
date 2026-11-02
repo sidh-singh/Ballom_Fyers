@@ -7,6 +7,14 @@ Format: `YYYY-MM-DD` — change — _why_.
 
 ---
 
+## 2026-11-02 — Per-lot premium cap (₹30K) on pair selection
+
+- Scanner skips any strike whose **premium × lot_size > `SCAN_MAX_PREMIUM_PER_LOT`**
+  (₹30,000 for a conservative start; `0` = off; per-symbol override `max_premium_per_lot`
+  in symbols.json). Worker + `dry_run.py` pass the lot CSV so the cap applies; the best
+  pair is chosen from strikes under the cap.
+- Verified: end-to-end pair stays ≤ ₹30K/lot; scoring excludes ₹32,500/lot, keeps ₹26,000.
+
 ## 2026-11-02 — Auth day-boundary switched to IST
 
 - `fyers_auth.py` now uses `now_ist()` / `today_ist()` for the token day-boundary,

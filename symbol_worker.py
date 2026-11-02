@@ -160,7 +160,8 @@ class SymbolWorker(threading.Thread):
                 self._close_leg()
 
     def _open_leg(self, side: str) -> None:
-        pair = scanner.scan_best_pair(self.cfg, self.ctx.api, self.ctx.meter)
+        lot_df = self.ctx.commodity_df if self.asset_type == "COMMODITY" else self.ctx.option_df
+        pair = scanner.scan_best_pair(self.cfg, self.ctx.api, self.ctx.meter, lot_df=lot_df)
         if not pair:
             log_strategy_event(self.symbol, side, "SCAN_EMPTY", details="no pair for entry")
             return

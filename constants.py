@@ -126,7 +126,10 @@ SCAN_STRIKE_COUNT = 20
 SCAN_MIN_DTE      = 10     # prefer expiries with ≥ this many days (carry-friendly)
 SCAN_MAX_DTE      = 45     # …and ≤ this many
 SCAN_MIN_OI       = 10000  # skip illiquid strikes (unless they have volume)
-SCAN_MAX_PREMIUM  = 0      # 0 = no premium cap
+SCAN_MAX_PREMIUM_PER_LOT = 30000   # ₹ — skip strikes whose premium × lot_size exceeds
+                                   # this (per-lot cost cap for a conservative start).
+                                   # 0 = no cap. Per-symbol override: "max_premium_per_lot"
+                                   # in symbols.json.
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
