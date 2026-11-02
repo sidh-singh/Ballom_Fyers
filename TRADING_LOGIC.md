@@ -112,12 +112,13 @@ add_qty(L) = fib[L] × units × lot_size                     # fib = 1,2,3,5,8,1
 target     = HEDGE_PER_UNIT × units + charges(qty, ltp)    # HEDGE_PER_UNIT = ₹100
 ```
 
-Worked example (NIFTY, `lot_size = 65`, `STEP_UP_BALANCE = 50,000`, floor+1):
+Worked example (NIFTY, `lot_size` from CSV, `STEP_UP_BALANCE = 1,00,000`, floor+1;
+`65` below is illustrative — the real lot size is read from the NSE CSV):
 | Balance | units | entry_qty | profit target |
 |---|---|---|---|
-| < ₹50,000 | 1 | 65 | **₹100 + taxes** |
-| ₹50,000 – <₹1L | 2 | 130 | **₹200 + taxes** |
-| ₹1,00,000 – <₹1.5L | 3 | 195 | ₹300 + taxes |
+| < ₹1,00,000 | 1 | 1×lot (e.g. 65) | **₹100 + taxes** |
+| ₹1L – <₹2L | 2 | 2×lot (e.g. 130) | **₹200 + taxes** |
+| ₹2L – <₹3L | 3 | 3×lot (e.g. 195) | ₹300 + taxes |
 
 Config (per symbol, in `symbols.json`): `step_up_balance`, `unit_max_limit`,
 `lot_size` auto-read from the cached NSE CSV (not hard-coded).
@@ -194,9 +195,9 @@ Reproduce the **Alcadeias MT5 chart** (`_alc_ref/dashboard.py:_build_daily_chart
 
 ## 8. Open decisions (confirm before implementation)
 
-- **O1 — units formula.** ✅ RESOLVED (2026-11-02): use Alcadeias
-  `units = min(floor(balance/50000)+1, UNIT_MAX_LIMIT)`. Tiers: `<50K→1` (65qty/₹100),
-  `50K–1L→2` (130qty/₹200), `1L–1.5L→3` (195qty/₹300), …
+- **O1 — units formula.** ✅ RESOLVED: `units = min(floor(balance/100000)+1, UNIT_MAX_LIMIT)`
+  (step = ₹1L). Tiers: `<1L→1` (1×lot), `1L–2L→2` (2×lot), `2L–3L→3` (3×lot), …
+  `lot` is the CSV minimum lot size (not hard-coded).
 - **O2 — signal source.** ✅ RESOLVED (2026-11-02): compute SHA + MTF-RSI on the
   **index** (`NSE:NIFTY50-INDEX`); bullish→CE, bearish→PE. Commodity uses its own index.
 - **O3 — ladder depth 6** (5 RSI adds M1/M5/M15/H1/H4 + H6 forced close): taken as

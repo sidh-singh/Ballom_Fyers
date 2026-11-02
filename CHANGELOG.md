@@ -7,6 +7,18 @@ Format: `YYYY-MM-DD` — change — _why_.
 
 ---
 
+## 2026-11-02 — Unit tier step ₹50K → ₹1L + live shadow dry run
+
+- **Tier step 50,000 → 100,000**: `units = floor(bal/1L)+1` → `<1L`=1 lot, `1L–2L`=2, `2L–3L`=3.
+  Lot size still from the CSV (NIFTY = 65). Updated `constants.py`, `symbols.json`, `TRADING_LOGIC.md`.
+- **Added `dry_run.py`** — one-shot SHADOW validation (real auth + live data + real scan/signal,
+  **NO orders**; safe any time).
+- **Ran it live:** auth OK; balance **₹0 → units 1**; NIFTY SHA bullish but **MTF RSI overbought
+  (96.6/82.6/75.4/73.8) → entry correctly BLOCKED** (DO_NOTHING); live scan returned a real carry
+  pair CE 23800 / PE 23000, expiry 2026-11-17 (DTE 14), lot 65 → entry_qty 65; 8 DATA + 1 USERINFO
+  calls, 0 orders. **Pipeline validated end-to-end against live Fyers.**
+- ⚠️ Account is currently **unfunded (₹0)** — must be funded before a real-money run.
+
 ## 2026-11-02 — Commodities wired (GOLD/SILVER, verified vs MCX master)
 
 - **`fyers_api.py`**: `download_commodity_data()` (MCX_COM.csv cache), `resolve_commodity(root)`

@@ -185,7 +185,9 @@ TIMEFRAME_TO_FYERS_RES = {
 }
 
 # ── Position sizing — balance-tiered units (Alcadeias floor+1, O1 ✓) ──
-STEP_UP_BALANCE      = 50_000   # ₹ per unit tier (per-symbol override in symbols.json)
+STEP_UP_BALANCE      = 100_000  # ₹ per unit tier: units = floor(bal/this)+1 (capped).
+                                #   <1L→1 lot, 1L–2L→2 lots, 2L–3L→3 lots, …
+                                #   (per-symbol override in symbols.json)
 UNIT_MAX_LIMIT       = 10       # cap on units
 HEDGE_PER_UNIT       = 100      # ₹ profit target per unit (Fyers analog of $1/unit)
 MAX_MARTINGALE_LEVEL = 5        # 5 RSI adds (M1/M5/M15/H1/H4), then H6 forced close
