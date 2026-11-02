@@ -1,13 +1,32 @@
 {
-    "indices" : [
+    "symbols": [
         {
-            "symbol" : "NIFTY",
-            "indices": "NSE:NIFTY50-INDEX",
-            "qty_times" : 1,
-            "hedge" : 500
+            "symbol": "NIFTY",
+            "asset_type": "INDEX",
+            "underlying": "NSE:NIFTY50-INDEX",
+            "step_up_balance": 50000,
+            "unit_max_limit": 10,
+            "enabled": true
+        },
+        {
+            "symbol": "GOLD",
+            "asset_type": "COMMODITY",
+            "underlying": "MCX:GOLD-INDEX",
+            "step_up_balance": 50000,
+            "unit_max_limit": 10,
+            "enabled": false,
+            "_note": "TODO: confirm exact Fyers MCX underlying/symbol (ARCHITECTURE O2)"
+        },
+        {
+            "symbol": "SILVER",
+            "asset_type": "COMMODITY",
+            "underlying": "MCX:SILVER-INDEX",
+            "step_up_balance": 50000,
+            "unit_max_limit": 10,
+            "enabled": false,
+            "_note": "TODO: confirm exact Fyers MCX underlying/symbol (ARCHITECTURE O2)"
         }
     ],
-    "max_active_commodities": 1,
     "max_balance_usage": 100000,
-    "brake" : 0
+    "brake": 0
 }

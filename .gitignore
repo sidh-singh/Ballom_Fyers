@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+*.pyo
+deps_installed.flag
+fyersApi.log
+fyersRequests.log
+.venv/
+venv/

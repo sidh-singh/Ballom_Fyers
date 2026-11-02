@@ -27,7 +27,8 @@ import pandas as pd
 import requests
 
 from fyers_auth import FyersAuth
-from constants import CACHE_DIR, SYMBOLS_COLS, MIN_CANDLES_FOR_ANALYSIS
+from api_meter import meter
+from constants import CACHE_DIR, SYMBOLS_COLS, MIN_CANDLES_FOR_ANALYSIS, PRODUCT_TYPE
 
 warnings.filterwarnings("ignore")
 
@@ -88,8 +89,61 @@ class FyersAPI:
         return self._auth.get_model()
 
     def safe_api_call(self, api_method, *args, **kwargs):
-        """Delegate to FyersAuth.safe_api_call (auto re-auth on failure)."""
-        return self._auth.safe_api_call(api_method, *args, **kwargs)
+        """Route every Fyers call through the API meter (throttle + count), then
+        FyersAuth.safe_api_call (auto re-auth on failure)."""
+        name = getattr(api_method, "__name__", "unknown")
+        return meter.guard(name, self._auth.safe_api_call, api_method, *args, **kwargs)
+
+    # ╔══════════════════════════════════════════════════════════════════════════╗
+    # ║  ORDER / ACCOUNT  (metered as ORDER / USERINFO via safe_api_call)        ║
+    # ╚══════════════════════════════════════════════════════════════════════════╝
+
+    def _order(self, symbol: str, side: int, qty: int, product_type: str):
+        data = {
+            "symbol": symbol, "qty": int(qty), "type": 2, "side": side,
+            "productType": product_type, "limitPrice": 0, "stopPrice": 0,
+            "validity": "DAY", "disclosedQty": 0, "offlineOrder": False,
+            "orderTag": symbol.split(":")[-1][:20],
+        }
+        return self.safe_api_call(self.model.place_order, data=data)
+
+    def buy(self, symbol: str, qty: int, product_type: str = PRODUCT_TYPE):
+        """Market BUY — enter or add to a long option leg."""
+        return self._order(symbol, side=1, qty=qty, product_type=product_type)
+
+    def sell(self, symbol: str, qty: int, product_type: str = PRODUCT_TYPE):
+        """Market SELL — close or reduce a long option leg."""
+        return self._order(symbol, side=-1, qty=qty, product_type=product_type)
+
+    def positions(self) -> dict:
+        return self.safe_api_call(self.model.positions)
+
+    def funds(self) -> dict:
+        return self.safe_api_call(self.model.funds)
+
+    def get_position(self, symbol: str, product_type: str = PRODUCT_TYPE) -> dict | None:
+        """Net position row for *symbol* (or None if flat / error).
+        Keys include: netQty, pl, ltp, netAvg, buyAvg, realized_profit, unrealized_profit."""
+        resp = self.positions()
+        if not isinstance(resp, dict) or resp.get("s") != "ok":
+            return None
+        for row in resp.get("netPositions", []):
+            if row.get("symbol") == symbol and row.get("productType", product_type) == product_type:
+                return row
+        return None
+
+    def get_balance(self) -> float:
+        """Total account balance (₹) from funds(); 0.0 on error. Drives unit tiers."""
+        resp = self.funds()
+        if not isinstance(resp, dict) or resp.get("s") != "ok":
+            return 0.0
+        for row in resp.get("fund_limit", []):
+            if "total balance" in str(row.get("title", "")).lower():
+                try:
+                    return float(row.get("equityAmount", 0) or 0)
+                except (TypeError, ValueError):
+                    return 0.0
+        return 0.0
 
     # ╔══════════════════════════════════════════════════════════════════════════╗
     # ║  MARKET-DATA DOWNLOADS  (cached daily on C: drive)                       ║

@@ -1,628 +1,242 @@
 """
-application.py — dev_scanner branch entry point.
+application.py — `fyers_live` engine entry point (Loop-1 supervisor). LIVE only.
 
-Usage:  python application.py [demo|live]
+Run:  python application.py        (Python 3.11 — see ARCHITECTURE §10)
 
-Architecture
-────────────
-  Infinite while-loop (runs 24×7):
-    Step 1 — Day-change detection  → re-auth token + re-download CSVs
-    Step 2 — Auth health           → verify / retry auth
-    Step 3 — Holiday check         → skip scan on NSE holidays
-    Step 4 — Hourly scan trigger   → scan best CE/PE pairs for NIFTY index
-    Step 5 — Write results         → option_pairs.json on C: drive
-    Step 6 — Sleep & repeat
+Two-loop design (ARCHITECTURE §5):
+  • Loop 1 (this file, 1 thread): auth, daily CSV re-download, holidays, brake,
+    and supervising the per-symbol worker threads. No market-data polling.
+  • Loop 2 (symbol_worker.py, 1 thread per symbol): scan/manage per symbol.
 
-Responsibilities (this branch ONLY):
-  • Fyers authentication (via fyers_auth.py)
-  • Hourly index option CE/PE pair scanning (via fyers_api.py)
-  • Writing option_pairs.json for dev_trading to consume
-  • Writing state files for dev_front_end dashboard
-
-Skips scanning when:
-  • Today is a holiday / weekend
-  • Outside index market hours (09:15 – 15:30)
-  • Open positions exist for a symbol (read from dev_trading's position_state.json)
+Opening/closing positions is deferred (ARCHITECTURE §11).
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import shutil
-import sys
-import tempfile
-from datetime import date, datetime, time as dt_time
-from pathlib import Path
+import threading
+from dataclasses import dataclass, field
+from datetime import date
 from time import sleep
 
+from constants import (
+    SYMBOLS_JSON, SUPERVISOR_TICK, DAILY_MAINTENANCE_AT, now_ist, today_ist,
+)
 from fyers_auth import FyersAuth
 from fyers_api import FyersAPI
-from constants import (
-    SYMBOLS_JSON,
-    OPTION_PAIRS_JSON,
-    INDICES_START,
-    INDICES_END,
-    STRATEGY_HEDGE_INDEX,
-)
-from state_writer import (
-    configure as configure_state_writer,
-    write_app_status,
-    log_strategy_event,
-    POSITION_STATE_FILE,
-)
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  LOGGING SETUP
-# ═══════════════════════════════════════════════════════════════════════════════
+from api_meter import meter
+from symbol_worker import SymbolWorker
+from position_tracker import PositionTracker
+from state_writer import write_app_status, log_strategy_event
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s | %(name)-14s | %(levelname)-7s | %(message)s",
+    format="%(asctime)s | %(name)-12s | %(levelname)-7s | %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger("application")
 
-# ═══════════════════════════════════════════════════════════════════════════════
-#  CONSTANTS
-# ═══════════════════════════════════════════════════════════════════════════════
-
-POLL_INTERVAL = 30   # seconds between each main-loop iteration
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  HELPERS — config & file I/O
+#  SHARED ENGINE CONTEXT  (passed to every worker)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def load_symbols_config() -> dict:
-    """Load symbols.json (indices config)."""
+@dataclass
+class EngineContext:
+    auth: FyersAuth
+    api: FyersAPI
+    meter: object
+    tracker: object
+    stop_event: threading.Event
+    brake_event: threading.Event
+    pairs_lock: threading.Lock
+    holidays: set = field(default_factory=set)
+    special_sessions: list = field(default_factory=list)
+    option_df: object = None
+
+    def is_trading_day(self, d: date) -> bool:
+        """Weekend + NSE-holiday aware (special sessions override)."""
+        ds = d.isoformat()
+        if any(s.get("date") == ds for s in self.special_sessions):
+            return True
+        if d.weekday() >= 5:
+            return False
+        return ds not in self.holidays
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  CONFIG
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def load_config() -> dict:
     with open(SYMBOLS_JSON, "r") as f:
         return json.load(f)
 
 
-def _write_json_atomic(path: Path, data: dict) -> None:
-    """Write *data* to *path* atomically via temp-file + move."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(suffix=".json", dir=str(path.parent))
-    try:
-        with open(fd, "w") as f:
-            json.dump(data, f, indent=4)
-        shutil.move(tmp, str(path))
-    except Exception:
-        if Path(tmp).exists():
-            Path(tmp).unlink()
-        raise
-
-
 # ═══════════════════════════════════════════════════════════════════════════════
-#  HELPERS — position check (reads dev_trading's state file)
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def get_symbols_with_open_positions() -> set[str]:
-    """Return the set of symbols that have open positions.
-
-    Reads position_state.json (written by dev_trading branch) and
-    collects the 'symbol' field from every row whose netQty != 0.
-
-    Returns an empty set on any read error so the scanner defaults
-    to scanning when the file is missing or corrupt.
-    """
-    try:
-        if not POSITION_STATE_FILE.exists():
-            return set()
-        with open(POSITION_STATE_FILE, "r") as f:
-            data = json.load(f)
-        open_symbols: set[str] = set()
-        for pos in data.get("positions", []):
-            net_qty = pos.get("netQty", pos.get("qty", 0))
-            if int(net_qty) == 0:
-                continue
-            pos_symbol = pos.get("symbol", "").upper()
-            open_symbols.add(pos_symbol)
-        return open_symbols
-    except Exception:
-        return set()
-
-
-def _symbol_has_open_position(symbol_key: str, open_positions: set[str]) -> bool:
-    """Check if *symbol_key* matches any open position symbol."""
-    key_upper = symbol_key.upper()
-    return any(key_upper in pos_sym for pos_sym in open_positions)
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  HELPERS — trading-day awareness
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def is_trading_day(
-    today: date,
-    holidays: set[str],
-    special_sessions: list[dict],
-) -> bool:
-    """True if *today* is a valid trading day."""
-    today_str = today.isoformat()
-    if any(ss.get("date") == today_str for ss in special_sessions):
-        return True
-    if today.weekday() >= 5:
-        return False
-    if today_str in holidays:
-        return False
-    return True
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  HELPERS — auth with retries
+#  AUTH + DAILY MAINTENANCE
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _startup_auth(auth: FyersAuth, max_retries: int = 10) -> bool:
-    """Attempt initial authentication with generous retries."""
     for attempt in range(1, max_retries + 1):
         try:
             auth.get_model(force=False)
-            logger.info("Startup auth succeeded (attempt %d)", attempt)
+            logger.info("Startup auth OK (attempt %d)", attempt)
             return True
         except Exception as e:
             logger.warning("Startup auth %d/%d failed: %s", attempt, max_retries, e)
-            if attempt < max_retries:
-                sleep(min(30 * attempt, 300))
+            sleep(min(30 * attempt, 300))
     return False
 
 
-def _day_change_auth(auth: FyersAuth) -> bool:
-    """Force re-auth on day change. Returns True on success."""
-    for attempt in range(1, 6):
-        try:
-            auth.get_model(force=True)
-            logger.info("Day-change re-auth succeeded (attempt %d)", attempt)
-            return True
-        except Exception as e:
-            logger.warning("Day-change auth %d/5 failed: %s", attempt, e)
-            if attempt < 5:
-                sleep(min(30 * attempt, 120))
-    return False
-
-
-def _check_token_health(auth: FyersAuth) -> bool:
-    """Ensure the token is still valid; attempt re-auth if not."""
+def _ensure_auth(auth: FyersAuth) -> bool:
+    """Re-auth on any failure (pt 2)."""
     if auth.is_authenticated:
         return True
     try:
         auth.get_model(force=False)
         return True
-    except Exception as e:
-        logger.warning("Token health check failed: %s — re-authenticating", e)
+    except Exception:
         try:
             auth.re_authenticate()
             return True
-        except Exception as re_err:
-            logger.error("Re-auth also failed: %s", re_err)
+        except Exception as e:
+            logger.error("Re-auth failed: %s", e)
             return False
 
 
+def daily_maintenance(ctx: EngineContext, reauth: bool) -> None:
+    """Re-auth (optional) + re-download CSV + refresh holidays (pt 1)."""
+    if reauth:
+        ctx.auth.get_model(force=True)
+    ctx.option_df = FyersAPI.download_option_data()
+
+    today = today_ist()
+    # Holidays: load (cached). Fetch is automatic on cache-miss.
+    # TODO: force a yearly refresh on Jan 1 (delete cache then fetch).
+    if (not ctx.holidays) or (today.month == 1 and today.day == 1):
+        FyersAPI.fetch_trading_holidays(today.year)
+        if today.month == 12:
+            FyersAPI.fetch_trading_holidays(today.year + 1)
+    ctx.holidays, ctx.special_sessions = FyersAPI.load_holiday_set(today.year)
+    logger.info("Daily maintenance done — %d holidays loaded", len(ctx.holidays))
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
-#  DAILY SETUP  (auth + CSV download + holidays)
+#  WORKER SUPERVISION
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def daily_setup(auth: FyersAuth, force_auth: bool = False):
-    """
-    Run once per new trading day (or at startup):
-      1. Authenticate (writes token to C:/Ballom_FYR/fyers_token.json)
-      2. Download NSE F&O symbol CSV
-      3. Fetch / cache trading holidays for the year
-    Returns (option_df, holidays, special_sessions).
-    """
-    auth.get_model(force=force_auth)
-    option_df = FyersAPI.download_option_data()
-    holidays, special_sessions = FyersAPI.load_holiday_set()
-    return option_df, holidays, special_sessions
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  INDEX PAIR SCANNING
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def scan_index_pairs(
-    api: FyersAPI,
-    indices: list,
-    option_df,
-    open_positions: set[str] | None = None,
-) -> dict:
-    """
-    Scan all index symbols from symbols.json and return best CE/PE pairs.
-
-    Returns dict keyed by symbol_key (e.g. "NIFTY") with structure:
-        { "CE": ..., "PE": ..., "CE_Strike": ..., "PE_Strike": ...,
-          "Expiry": ..., "Trend_Score": ..., "VIX": ...,
-          "indices": ..., "qty": ..., "hedge": ... }
-    """
-    result: dict = {}
-    open_positions = open_positions or set()
-
-    for entry in indices:
-        symbol_key = entry["symbol"]
-        underlying = entry["indices"]
-
-        # ── Skip if dev_trading has an open position for this symbol ────
-        if _symbol_has_open_position(symbol_key, open_positions):
-            log_strategy_event(
-                symbol_key, "SCAN", "SKIP_OPEN_POSITION",
-                details=f"Position open for {symbol_key} — skipping scan",
-            )
+def supervise_workers(workers: dict, config: dict, ctx: EngineContext) -> None:
+    """Spawn enabled symbols; restart any worker that has died."""
+    for entry in config.get("symbols", []):
+        if not entry.get("enabled"):
             continue
-
-        qty_times = entry.get("qty_times", 1)
-        hedge     = entry.get("hedge", STRATEGY_HEDGE_INDEX)
-
-        try:
-            pair = api.fetch_option_pair(underlying, asset_type="INDEX")
-        except Exception as e:
-            log_strategy_event(
-                symbol_key, "SCAN", "INDEX_ERROR", details=str(e),
-            )
-            continue
-
-        debug_trail = pair.get("Debug", "")
-        if not pair.get("Recommended"):
-            if not pair.get("CE_Symbol") or not pair.get("PE_Symbol"):
-                log_strategy_event(
-                    symbol_key, "SCAN", "SKIP_INDEX",
-                    details=f"{pair.get('Message', 'skipped')} || {debug_trail}",
-                )
-                continue
-            log_strategy_event(
-                symbol_key, "SCAN", "FALLBACK_INDEX",
-                details=f"Using fallback pair || {debug_trail}",
-            )
-
-        try:
-            lot = FyersAPI.get_lot_size(pair["CE_Symbol"], option_df)
-        except ValueError as e:
-            log_strategy_event(
-                symbol_key, "SCAN", "LOT_ERROR", details=str(e),
-            )
-            continue
-
-        qty    = int(lot * qty_times)
-        ce_sym = pair.get("CE_Symbol", "")
-        pe_sym = pair.get("PE_Symbol", "")
-
-        if not ce_sym or not pe_sym:
-            log_strategy_event(
-                symbol_key, "SCAN", "INVALID_PAIR",
-                details=f"Empty symbol: CE={ce_sym!r} PE={pe_sym!r}",
-            )
-            continue
-
-        result[symbol_key] = {
-            "CE": ce_sym,
-            "PE": pe_sym,
-            "CE_Strike": pair["CE_Strike"],
-            "PE_Strike": pair["PE_Strike"],
-            "Expiry": pair["Expiry"],
-            "Trend_Score": pair["Trend_Score"],
-            "VIX": pair["VIX"],
-            "indices": underlying,
-            "qty": qty,
-            "hedge": hedge,
-        }
-        log_strategy_event(
-            symbol_key, "SCAN", "INDEX_PAIR_FOUND", qty=qty,
-            details=(
-                f"CE={ce_sym} PE={pe_sym} Exp={pair['Expiry']} || {debug_trail}"
-            ),
-        )
-
-    return result
+        sym = entry["symbol"]
+        w = workers.get(sym)
+        if w is None or not w.is_alive():
+            if w is not None:
+                logger.warning("[%s] worker died — restarting", sym)
+            nw = SymbolWorker(entry, ctx)
+            nw.start()
+            workers[sym] = nw
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  MAIN
+#  MAIN  (Loop 1)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def main() -> None:
-    mode = (sys.argv[1] if len(sys.argv) > 1 else "demo").lower()
     logger.info("=" * 60)
-    logger.info("  dev_scanner starting — mode=%s", mode)
+    logger.info("  fyers_live engine starting (LIVE)")
     logger.info("=" * 60)
 
-    # ── Configure state writer ─────────────────────────────────────────────
-    configure_state_writer(mode)
+    config = load_config()
+    auth = FyersAuth(read_only=False)
+    api = FyersAPI(auth)
+    tracker = PositionTracker()
+    ctx = EngineContext(
+        auth=auth, api=api, meter=meter, tracker=tracker,
+        stop_event=threading.Event(), brake_event=threading.Event(),
+        pairs_lock=threading.Lock(),
+    )
 
-    # ── Load symbols config ────────────────────────────────────────────────
-    config  = load_symbols_config()
-    indices = config.get("indices", [])
-
-    # ── Initialize Fyers auth + API ────────────────────────────────────────
-    auth = FyersAuth(read_only=False)   # scanner is the primary auth writer
-    api  = FyersAPI(auth)
-
-    # ── Initial authentication + daily setup ───────────────────────────────
-    current_day = date.today()
-    option_df   = None
-    holidays: set[str]     = set()
-    special_sessions: list = []
-    setup_ok    = False
-    auth_ok     = False
-
-    auth_ok = _startup_auth(auth)
-    if auth_ok:
-        log_strategy_event(
-            "SYSTEM", "INIT", "AUTH_OK",
-            details=f"Startup auth succeeded for {current_day} (mode={mode})",
-        )
-        auth.start_heartbeat()
-
-        try:
-            option_df, holidays, special_sessions = daily_setup(
-                auth, force_auth=False,
-            )
-            setup_ok = True
-            log_strategy_event(
-                "SYSTEM", "INIT", "DAILY_SETUP_OK",
-                details=f"Auth + CSV done for {current_day}",
-            )
-        except Exception as e:
-            log_strategy_event(
-                "SYSTEM", "INIT", "DAILY_SETUP_FAIL", details=str(e),
-            )
-    else:
-        log_strategy_event(
-            "SYSTEM", "INIT", "AUTH_FAIL",
-            details=f"Startup auth FAILED for {current_day} — will retry",
-        )
-
-    # Pre-fetch holidays for this year (and next if December)
+    # startup
+    if not _startup_auth(auth):
+        write_app_status("auth_failed", "Startup auth failed")
+        logger.error("Could not authenticate at startup — exiting")
+        return
+    auth.start_heartbeat()
     try:
-        FyersAPI.fetch_trading_holidays(current_day.year)
-        if current_day.month == 12:
-            FyersAPI.fetch_trading_holidays(current_day.year + 1)
+        daily_maintenance(ctx, reauth=False)
     except Exception as e:
-        log_strategy_event(
-            "SYSTEM", "INIT", "HOLIDAY_FETCH_FAIL", details=str(e),
-        )
+        logger.exception("Initial daily_maintenance failed: %s", e)
 
-    write_app_status(
-        mode, str(current_day), status="started",
-        message=f"Scanner started — setup {'OK' if setup_ok else 'FAILED'}",
-    )
+    workers: dict[str, SymbolWorker] = {}
+    supervise_workers(workers, config, ctx)
+    write_app_status("started", f"{len(workers)} worker(s) spawned")
 
-    last_scan_hour = -1   # -1 forces a scan on the very first eligible hour
+    current_day = today_ist()
+    did_maintenance_today = True        # startup already ran it
 
-    logger.info(
-        "Entering main loop (poll=%ds, auth=%s, setup=%s)",
-        POLL_INTERVAL,
-        "OK" if auth_ok else "PENDING",
-        "OK" if setup_ok else "PENDING",
-    )
-
-    # ══════════════════════════════════════════════════════════════════════════
-    #  INFINITE LOOP
-    # ══════════════════════════════════════════════════════════════════════════
+    # ── supervisor loop ─────────────────────────────────────────────────────
     while True:
         try:
-            today = date.today()
-            now   = datetime.now()
-            current_time = now.time()
+            now = now_ist()
+            today = now.date()
 
-            # ── Step 1: Day-change → re-auth + re-download CSVs ────────────
             if today != current_day:
-                logger.info("Day change: %s → %s", current_day, today)
                 current_day = today
-                setup_ok = False
-                last_scan_hour = -1
+                did_maintenance_today = False
 
-                auth_ok = _day_change_auth(auth)
-                if auth_ok:
-                    try:
-                        option_df, holidays, special_sessions = daily_setup(
-                            auth, force_auth=False,
-                        )
-                        setup_ok = True
-                        log_strategy_event(
-                            "SYSTEM", "SCANNER", "NEW_DAY_SETUP_OK",
-                            details=f"Day change — re-auth + CSV for {current_day}",
-                        )
-                    except Exception as e:
-                        log_strategy_event(
-                            "SYSTEM", "SCANNER", "NEW_DAY_SETUP_FAIL",
-                            details=str(e),
-                        )
-                else:
-                    log_strategy_event(
-                        "SYSTEM", "AUTH", "DAY_CHANGE_FAIL",
-                        details=f"Re-auth FAILED for {today}",
-                    )
-
-                # Refresh holiday calendar
+            # daily maintenance window (~00:10) — pt 1
+            if not did_maintenance_today and now.time() >= DAILY_MAINTENANCE_AT:
                 try:
-                    FyersAPI.fetch_trading_holidays(today.year)
-                    if today.month == 12:
-                        FyersAPI.fetch_trading_holidays(today.year + 1)
-                except Exception:
-                    pass
-
-                write_app_status(
-                    mode, str(current_day), status="new_day",
-                    message=f"Day change — setup {'OK' if setup_ok else 'FAILED'}",
-                )
-
-            # ── Step 2: Retry auth + setup if not yet successful ───────────
-            if not auth_ok:
-                try:
-                    auth.get_model(force=True)
-                    auth_ok = True
-                    auth.start_heartbeat()
-                    log_strategy_event(
-                        "SYSTEM", "AUTH", "RETRY_OK",
-                        details="Auth retry succeeded",
-                    )
+                    daily_maintenance(ctx, reauth=True)
+                    did_maintenance_today = True
+                    log_strategy_event("SYSTEM", "LOOP1", "DAILY_MAINTENANCE_OK")
                 except Exception as e:
-                    write_app_status(
-                        mode, str(current_day), status="auth_failed",
-                        message=f"Auth failing: {str(e)[:80]}",
-                    )
-                    sleep(30)
-                    continue
+                    logger.exception("daily_maintenance failed: %s", e)
+                    log_strategy_event("SYSTEM", "LOOP1", "DAILY_MAINTENANCE_FAIL",
+                                       details=str(e)[:200])
 
-            if not setup_ok:
-                try:
-                    option_df, holidays, special_sessions = daily_setup(
-                        auth, force_auth=False,
-                    )
-                    setup_ok = True
-                    log_strategy_event(
-                        "SYSTEM", "SCANNER", "SETUP_RETRY_OK",
-                        details="daily_setup retry succeeded",
-                    )
-                except Exception as e:
-                    write_app_status(
-                        mode, str(current_day), status="setup_failed",
-                        message=f"daily_setup failing: {str(e)[:80]}",
-                    )
-                    sleep(30)
-                    continue
+            # auth health (pt 2)
+            if not _ensure_auth(auth):
+                write_app_status("auth_failed", "Auth health check failing")
 
-            # ── Step 3: Token health check ─────────────────────────────────
-            if not _check_token_health(auth):
-                auth_ok = False
-                write_app_status(
-                    mode, str(current_day), status="auth_failed",
-                    message="Token health check failed — retrying",
-                )
-                sleep(10)
-                continue
-
-            # ── Step 4: Holiday check → skip scanning on holidays ──────────
-            if not is_trading_day(today, holidays, special_sessions):
-                write_app_status(
-                    mode, str(current_day), status="holiday",
-                    message="Market holiday — scanner idle",
-                )
-                sleep(60)
-                continue
-
-            # ── Step 5: Brake check (kill-switch in symbols.json) ──────
-            if config.get("brake", 0) == 1:
-                write_app_status(
-                    mode, str(current_day), status="brake",
-                    message="Brake ON in symbols.json — scanning paused",
-                )
-                sleep(POLL_INTERVAL)
-                continue
-            # Re-read config each loop in case symbols.json changed on disk
+            # re-read config → brake (pt 4) + enable/disable
             try:
-                config = load_symbols_config()
-                indices = config.get("indices", [])
+                config = load_config()
             except Exception:
-                pass  # keep previous config on read error
+                pass
+            if config.get("brake", 0) == 1:
+                ctx.brake_event.set()
+                write_app_status("brake", "Brake ON — workers paused")
+            else:
+                ctx.brake_event.clear()
 
-            # ── Step 6: Hourly scan trigger ────────────────────────────
-            current_hour = now.hour
+            # supervise workers
+            supervise_workers(workers, config, ctx)
 
-            if current_hour != last_scan_hour:
-                open_positions = get_symbols_with_open_positions()
-                in_idx_window = INDICES_START <= current_time <= INDICES_END
-
-                if in_idx_window and option_df is not None:
-                    write_app_status(
-                        mode, str(current_day), status="scanning",
-                        in_indices_window=True,
-                        message=f"Hourly scan at {now.strftime('%H:%M')}",
-                    )
-
-                    idx_count = 0
-                    try:
-                        idx_result = scan_index_pairs(
-                            api, indices, option_df, open_positions,
-                        )
-                        if idx_result:
-                            _write_json_atomic(OPTION_PAIRS_JSON, idx_result)
-                            idx_count = len(idx_result)
-                            log_strategy_event(
-                                "SYSTEM", "SCAN", "INDEX_SCAN_DONE",
-                                details=f"{idx_count} index pair(s) written",
-                            )
-                        else:
-                            log_strategy_event(
-                                "SYSTEM", "SCAN", "INDEX_SCAN_EMPTY",
-                                details=(
-                                    "Scan returned 0 pairs — keeping existing "
-                                    "option_pairs.json"
-                                ),
-                            )
-                    except Exception as e:
-                        if FyersAuth.is_auth_failure_exception(e):
-                            log_strategy_event(
-                                "SYSTEM", "AUTH", "REAUTH_INDEX_SCAN",
-                                details=f"Auth failure during scan: {e}",
-                            )
-                            try:
-                                auth.re_authenticate()
-                                idx_result = scan_index_pairs(
-                                    api, indices, option_df, open_positions,
-                                )
-                                if idx_result:
-                                    _write_json_atomic(
-                                        OPTION_PAIRS_JSON, idx_result,
-                                    )
-                                    idx_count = len(idx_result)
-                                    log_strategy_event(
-                                        "SYSTEM", "SCAN", "INDEX_SCAN_DONE",
-                                        details=(
-                                            f"{idx_count} pair(s) written "
-                                            f"(after re-auth)"
-                                        ),
-                                    )
-                            except Exception as re_err:
-                                log_strategy_event(
-                                    "SYSTEM", "SCAN", "INDEX_SCAN_FAIL",
-                                    details=f"Re-auth retry failed: {re_err}",
-                                )
-                        else:
-                            log_strategy_event(
-                                "SYSTEM", "SCAN", "INDEX_SCAN_FAIL",
-                                details=str(e),
-                            )
-
-                    last_scan_hour = current_hour
-                    next_hour = (current_hour + 1) % 24
-                    write_app_status(
-                        mode, str(current_day), status="idle",
-                        indices_scanned=idx_count > 0,
-                        in_indices_window=True,
-                        message=(
-                            f"Scan done — IDX={idx_count} | "
-                            f"next at {next_hour:02d}:00"
-                        ),
-                    )
-                else:
-                    # Outside index market window
-                    last_scan_hour = current_hour
-                    write_app_status(
-                        mode, str(current_day), status="idle",
-                        message=f"Outside market hours ({now.strftime('%H:%M')})",
-                    )
+            if not ctx.brake_event.is_set():
+                write_app_status(
+                    "running",
+                    f"{sum(w.is_alive() for w in workers.values())} worker(s) alive",
+                    holidays_loaded=len(ctx.holidays),
+                )
 
         except KeyboardInterrupt:
             logger.info("Shutdown requested (Ctrl+C)")
+            ctx.stop_event.set()
             auth.stop_heartbeat()
-            write_app_status(
-                mode, str(current_day), status="stopped",
-                message="Shutdown by user (Ctrl+C)",
-            )
+            for w in workers.values():
+                w.join(timeout=5)
+            write_app_status("stopped", "Shutdown by user")
             break
-
         except Exception as e:
-            logger.exception("Unhandled error in main loop: %s", e)
-            log_strategy_event(
-                "SYSTEM", "ERROR", "MAIN_LOOP_EXCEPTION",
-                details=str(e)[:200],
-            )
-            if FyersAuth.is_auth_failure_exception(e):
-                auth_ok = False
-                auth.invalidate()
+            logger.exception("Supervisor error: %s", e)
 
-        sleep(POLL_INTERVAL)
+        sleep(SUPERVISOR_TICK)
 
 
 if __name__ == "__main__":

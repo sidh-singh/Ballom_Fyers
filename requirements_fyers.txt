@@ -1,8 +1,17 @@
+# fyers_live — LIVE engine + dashboard (Python 3.11; 3.13 can't build fyers-apiv3's aiohttp pin)
+
+# ── Engine ──────────────────────────────────────────────
+fyers-apiv3==3.1.7
+pyotp==2.9.0
+requests
 pandas==2.2.0
 numpy
-fyers-apiv3==3.1.7
-dacite==1.9.2
-multiprocess==0.70.18
-beautifulsoup4==4.14.2
-pyotp==2.9.0
-scipy==1.16.3
+tzdata            # zoneinfo "Asia/Kolkata" on Windows (ARCHITECTURE §7)
+
+# ── Dashboard (separate process) ────────────────────────
+dash
+plotly
+
+# Dropped from the old multi-branch set (unused in fyers_live now):
+#   dacite, multiprocess, beautifulsoup4, scipy
+#   → re-add when the trading port actually needs them.
