@@ -7,6 +7,20 @@ Format: `YYYY-MM-DD` — change — _why_.
 
 ---
 
+## 2026-11-02 — Loop optimization (lighter, no over-processing)
+
+- **SHA cached per bar** (`symbol_worker._get_sha`): the 300-candle fetch + SHA/trend
+  compute now refresh at most once per 5-min bar instead of every 60s tick (SHA is a
+  5-min indicator — sub-bar re-evaluation was wasted work). ~5× fewer DATA calls/symbol.
+- **Commodity resolution cached daily**: the 16k-row MCX filter + session parse runs
+  once per IST day (the future changes monthly), not every tick.
+- **Loop-1 config reload on mtime**: `symbols.json` is re-read only when it changes on
+  disk, not every 30s.
+- (RSI was already cached per bar.) Net: both loops do mostly cached reads + cheap compute
+  per tick; live API work is bounded by bar cadence, not tick cadence.
+- Verified: SHA + RSI fetch once then serve from cache; netting flow / cap / commodity /
+  get_balance tests still pass; full engine imports.
+
 ## 2026-11-02 — Per-lot premium cap (₹30K) on pair selection
 
 - Scanner skips any strike whose **premium × lot_size > `SCAN_MAX_PREMIUM_PER_LOT`**

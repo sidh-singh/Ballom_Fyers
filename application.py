@@ -187,6 +187,10 @@ def main() -> None:
 
     current_day = today_ist()
     did_maintenance_today = True        # startup already ran it
+    try:
+        cfg_mtime = SYMBOLS_JSON.stat().st_mtime
+    except Exception:
+        cfg_mtime = None
 
     # ── supervisor loop ─────────────────────────────────────────────────────
     while True:
@@ -213,9 +217,12 @@ def main() -> None:
             if not _ensure_auth(auth):
                 write_app_status("auth_failed", "Auth health check failing")
 
-            # re-read config → brake (pt 4) + enable/disable
+            # re-read config only when symbols.json changed on disk (lighter loop)
             try:
-                config = load_config()
+                _m = SYMBOLS_JSON.stat().st_mtime
+                if _m != cfg_mtime:
+                    config = load_config()
+                    cfg_mtime = _m
             except Exception:
                 pass
             if config.get("brake", 0) == 1:

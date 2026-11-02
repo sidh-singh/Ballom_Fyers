@@ -72,6 +72,9 @@ class SymbolWorker(threading.Thread):
         self.active: dict | None = None     # {"side": "CE"|"PE", "symbol": leg_sym}
         self.pending_close = False
         self._rsi_cache: dict = {}          # tf -> (monotonic_fetch_time, value)
+        self._sha_cache = None              # (fetch_monotonic, df, sha, sha_trend) — per bar
+        self._sha_ttl = int(SHA_TIMEFRAME) * 60 if str(SHA_TIMEFRAME).isdigit() else 300
+        self._resolved_on = None            # IST date the commodity future was last resolved
 
     # ── thread main ─────────────────────────────────────────────────────────
     def run(self) -> None:
@@ -100,12 +103,10 @@ class SymbolWorker(threading.Thread):
             if self.active:
                 return
 
-        source_df = self._index_candles()
-        if source_df is None or len(source_df) < max(SHA_TREND_LENGTH * 3, 60):
+        source_df, sha, sha_trend = self._get_sha()      # cached per SHA bar
+        if source_df is None:
             logger.info("[%s] insufficient index candles", self.symbol)
             return
-        sha = self.indicator.calculate_sha_v3(source_df, SHA_LENGTH, SHA_MA_TYPE)
-        sha_trend = self.indicator.calculate_sha_v3(source_df, SHA_TREND_LENGTH, SHA_TREND_MA_TYPE)
 
         buy_pos, sell_pos, close_threshold, count = self._leg_state_and_threshold()
         rsi_mtf = self._rsi_mtf(count)
@@ -242,6 +243,22 @@ class SymbolWorker(threading.Thread):
             logger.warning("[%s] index candle fetch failed: %s", self.symbol, e)
             return None
 
+    def _get_sha(self):
+        """SHA source candles + computed signal/trend SHA, cached per SHA bar.
+        SHA is a 5-min indicator, so refetching 300 candles + recomputing every 60s
+        tick is wasted work — this refreshes at most once per bar."""
+        now = monotonic()
+        if self._sha_cache and (now - self._sha_cache[0]) < self._sha_ttl:
+            _, df, sha, shat = self._sha_cache
+            return df, sha, shat
+        df = self._index_candles()
+        if df is None or len(df) < max(SHA_TREND_LENGTH * 3, 60):
+            return None, None, None
+        sha = self.indicator.calculate_sha_v3(df, SHA_LENGTH, SHA_MA_TYPE)
+        shat = self.indicator.calculate_sha_v3(df, SHA_TREND_LENGTH, SHA_TREND_MA_TYPE)
+        self._sha_cache = (now, df, sha, shat)
+        return df, sha, shat
+
     def _rsi_mtf(self, count: int) -> dict:
         """Fetch only the RSI timeframes needed this tick (budget-aware + cached)."""
         if self.active is None:
@@ -298,6 +315,9 @@ class SymbolWorker(threading.Thread):
         if self.asset_type != "COMMODITY":
             self.cfg["_resolved_underlying"] = self.underlying
             return
+        today = now_ist().date()
+        if self._resolved_on == today and self._session is not None:
+            return                               # resolved already today — skip the df scan
         df = getattr(self.ctx, "commodity_df", None)
         if df is None:
             return
@@ -305,6 +325,7 @@ class SymbolWorker(threading.Thread):
         if res:
             self._active_underlying, self._session = res
             self.cfg["_resolved_underlying"] = self._active_underlying
+            self._resolved_on = today
 
     # ── misc ────────────────────────────────────────────────────────────────
     def _in_window(self) -> bool:
