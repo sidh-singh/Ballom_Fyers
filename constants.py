@@ -116,7 +116,17 @@ DEFAULT_CATEGORY = "DATA"   # unknown method → treat as DATA (most-restrictive
 
 MIN_CANDLES_FOR_ANALYSIS = 200
 STRATEGY_HEDGE_INDEX     = 500     # ₹ default hedge (override per-symbol)
-NSE_FO_URL = "https://public.fyers.in/sym_details/NSE_FO.csv"
+NSE_FO_URL  = "https://public.fyers.in/sym_details/NSE_FO.csv"
+MCX_COM_URL = "https://public.fyers.in/sym_details/MCX_COM.csv"
+
+# ── Option-pair scan tuning (carry-oriented; see scanner.py) ──
+# Signals are index-driven (O2), so the scan no longer needs per-option candle
+# history — it selects on liquidity + moneyness only (far fewer API calls).
+SCAN_STRIKE_COUNT = 20
+SCAN_MIN_DTE      = 10     # prefer expiries with ≥ this many days (carry-friendly)
+SCAN_MAX_DTE      = 45     # …and ≤ this many
+SCAN_MIN_OI       = 10000  # skip illiquid strikes (unless they have volume)
+SCAN_MAX_PREMIUM  = 0      # 0 = no premium cap
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

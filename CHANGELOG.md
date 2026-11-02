@@ -7,6 +7,16 @@ Format: `YYYY-MM-DD` — change — _why_.
 
 ---
 
+## 2026-11-02 — Improved option-pair scan (pts 7–8, done & verified)
+
+- **Rewrote `scanner.py`** — carry-oriented, self-contained CE/PE selection via
+  `optionchain`: scores on moneyness (slight-OTM) + bid/ask spread + OI + volume +
+  affordability; expiry preference `DTE ∈ [10,45]`. **Dropped the old per-candidate
+  candle-history check** (unneeded now signals are index-driven) → far fewer DATA calls.
+- Added scan tuning constants (`SCAN_*`) + `MCX_COM_URL`.
+- **Verified** (mock chain): picks liquid slightly-OTM CE above spot / PE below spot,
+  expiry inside the carry band. No per-option history calls.
+
 ## 2026-11-02 — Trading Increment 4: live hardening (done & verified)
 
 - **Cost-basis P&L model** (`position_tracker.py`): replaced intraday
