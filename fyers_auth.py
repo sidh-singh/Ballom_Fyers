@@ -61,7 +61,7 @@ import pyotp
 import requests
 from fyers_apiv3 import fyersModel
 
-from constants import TOKEN_FILE, TOKEN_DIR
+from constants import TOKEN_FILE, TOKEN_DIR, now_ist, today_ist
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  LOGGING
@@ -168,7 +168,7 @@ class FyersAuth:
             if self._read_only:
                 return self._ensure_session(force=True)
             model = self._authenticate_with_retry()
-            self._token_date = date.today()
+            self._token_date = today_ist()
             return model
 
     def invalidate(self) -> None:
@@ -227,7 +227,7 @@ class FyersAuth:
     @property
     def is_authenticated(self) -> bool:
         """True if we have a model and it was authenticated today."""
-        return self._model is not None and self._token_date == date.today()
+        return self._model is not None and self._token_date == today_ist()
 
     @property
     def token_date(self) -> date | None:
@@ -239,7 +239,7 @@ class FyersAuth:
 
     def _ensure_session(self, force: bool = False) -> fyersModel.FyersModel:
         """Core logic — must be called inside self._lock."""
-        today = date.today()
+        today = today_ist()
 
         # Fast path: already authenticated today
         if not force and self._model and self._token_date == today:
@@ -319,8 +319,8 @@ class FyersAuth:
         TOKEN_DIR.mkdir(parents=True, exist_ok=True)
         data = {
             "access_token": token,
-            "date": date.today().isoformat(),
-            "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "date": today_ist().isoformat(),
+            "created_at": now_ist().strftime("%Y-%m-%d %H:%M:%S"),
             "expired": False,
         }
         self._write_json_atomic(TOKEN_FILE, data)
@@ -515,7 +515,7 @@ class FyersAuth:
         # ── Step 2: TOTP generation with window-edge avoidance ─────────────
         # TOTP codes change every 30 seconds.  If we're near the boundary
         # (last 5s or first 2s of the window), wait to avoid stale codes.
-        sec = datetime.now().second % 30
+        sec = now_ist().second % 30
         if sec > 25 or sec < 2:
             wait_secs = max(30 - sec, 3)
             logger.debug("Near TOTP window edge (sec=%d), waiting %ds", sec, wait_secs)

@@ -7,6 +7,15 @@ Format: `YYYY-MM-DD` — change — _why_.
 
 ---
 
+## 2026-11-02 — Auth day-boundary switched to IST
+
+- `fyers_auth.py` now uses `now_ist()` / `today_ist()` for the token day-boundary,
+  `created_at`, and the TOTP window check (was naive local time). The token's "new day"
+  now matches the **IST market day regardless of server timezone**, so a non-IST server
+  won't mistime re-logins or briefly treat a valid token as stale. Token caching/reuse
+  behaviour is unchanged (1 login/day, reused for all calls). Verified: no naive
+  `date.today()`/`datetime.now()` left; imports + `is_authenticated` exercise the IST path.
+
 ## 2026-11-02 — Server launchers modelled on Alcadeias (.bat)
 
 - Rewrote `start_app.bat` + `start_dashboard.bat` to match the Alcadeias
