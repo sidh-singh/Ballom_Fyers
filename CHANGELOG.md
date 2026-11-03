@@ -1,5 +1,21 @@
 # CHANGELOG — `fyers_live` / `fyers_demo`
 
+## 2026-11-03 — Rich dashboard + engine analysis state (demo)
+
+- Demo balance → **₹90,000**; enabled **NIFTY + GOLDM + SILVERM** (mini contracts) for testing.
+- **Engine writes analysis state** for the dashboard: `signal_state.json` per symbol
+  (signal, best CE/PE pair, SHA signal+trend power/list, multi-timeframe RSI, rsi-block,
+  live position) and `account_state.json` (balance/equity/margin/unrealized). Worker caches
+  a per-bar display-scan so the best pair always shows without extra API cost.
+- **Rebuilt `dashboard.py`** (rich, colourful): account KPI row, API meter, per-symbol
+  strategy panels (signal badge, CE/PE pair cards, **SHA candle squares**, **RSI TF cells**,
+  live position), per-asset **booking charts** (bar + cumulative/drawdown), strategy log.
+  Colour semantics BUY=green / SELL=red / nothing=grey / ADD=amber / CLOSE=purple /
+  HOLD=blue — every status colour paired with a text label (dataviz method).
+- **Verified:** unit render (3 symbols) + a **live demo engine run (2026-11-03)** wrote real
+  state — NIFTY held (M30 RSI 79 → RSI-block), GOLDM/SILVERM opened dummy CE; dashboard
+  rendered from the real files. (Same dashboard + state code then ported to `fyers_live`.)
+
 ## 2026-11-03 — `fyers_demo` branch: local paper-trading (demo account)
 
 Branch `fyers_demo` (from `fyers_live`). Fyers has no demo account, so OPEN/CLOSE are

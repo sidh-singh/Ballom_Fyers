@@ -49,6 +49,8 @@ APP_STATUS_FILE     = STATE_DIR / "app_status.json"
 API_USAGE_FILE      = STATE_DIR / "api_usage.json"      # written by api_meter
 OPTION_PAIRS_JSON   = STATE_DIR / "option_pairs.json"
 POSITION_STATE_FILE = STATE_DIR / "position_state.json"
+SIGNAL_STATE_FILE   = STATE_DIR / "signal_state.json"   # per-symbol SHA/RSI/signal/pair
+ACCOUNT_STATE_FILE  = STATE_DIR / "account_state.json"  # balance/equity/margin
 STRATEGY_LOG_DIR    = STATE_DIR / "strategy_log"
 
 SYMBOLS_JSON = Path(__file__).resolve().parent / "symbols.json"
@@ -205,7 +207,7 @@ BALANCE_SOURCE_TITLES = ["total balance", "available balance"]
 # read APIs stay real (auth/quotes/optionchain/history) — exercises real throttling.
 DEMO_DIR           = BALLOM_DIR / "demo"
 DEMO_BROKER_FILE   = DEMO_DIR / "demo_broker.json"
-DEMO_START_BALANCE = 200_000   # ₹ simulated starting balance (drives unit tiers)
+DEMO_START_BALANCE = 90_000    # ₹ simulated starting balance (drives unit tiers)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  CHARGES / TAXES  (exact, from dev_trading constants.py)

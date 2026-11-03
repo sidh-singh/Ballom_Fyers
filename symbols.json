@@ -10,28 +10,26 @@
             "enabled": true
         },
         {
-            "symbol": "GOLD",
+            "symbol": "GOLDM",
             "asset_type": "COMMODITY",
-            "root": "GOLD",
-            "underlying": "MCX:GOLD-FUT",
+            "root": "GOLDM",
+            "underlying": "MCX:GOLDM-FUT",
             "step_up_balance": 100000,
             "unit_max_limit": 10,
             "hedge_per_unit": 100,
-            "enabled": false,
-            "_note": "Future symbol + session resolved from MCX CSV by root. Before enabling: (1) confirm Fyers optionchain works for the resolved MCX future, (2) tune hedge_per_unit for GOLD premiums (lot_size=1, ₹100 target may be too small)."
+            "enabled": true
         },
         {
-            "symbol": "SILVER",
+            "symbol": "SILVERM",
             "asset_type": "COMMODITY",
-            "root": "SILVER",
-            "underlying": "MCX:SILVER-FUT",
+            "root": "SILVERM",
+            "underlying": "MCX:SILVERM-FUT",
             "step_up_balance": 100000,
             "unit_max_limit": 10,
             "hedge_per_unit": 100,
-            "enabled": false,
-            "_note": "Same as GOLD — confirm optionchain + tune hedge_per_unit before enabling."
+            "enabled": true
         }
     ],
-    "max_balance_usage": 100000,
+    "max_balance_usage": 90000,
     "brake": 0
 }
