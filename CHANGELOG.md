@@ -7,6 +7,11 @@ Format: `YYYY-MM-DD` — change — _why_.
 
 ---
 
+## 2026-11-03 — Dashboard fix: single-close cumulative visible
+
+- Booking-chart cumulative trace now `lines+markers`, so a lone close renders as a dot
+  (a single point in `lines` mode drew nothing).
+
 ## 2026-11-03 — Rich dashboard + engine analysis state (ported from fyers_demo)
 
 - Engine now writes **`signal_state.json`** per symbol (signal, best CE/PE pair, SHA
