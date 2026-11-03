@@ -1,207 +1,167 @@
-# TRADING_LOGIC — `fyers_live`
+# TRADING_LOGIC — `fyers_hedging_live` / `fyers_hedging_demo`  (RSI+MACD, variant B)
 
-> **Status:** 🟡 Spec (implementation pending confirmation)
-> **Source of truth:** Alcadeias MT5 bot, branch `dev_btcusd1_v2`
-> (`C:/Users/sings213/Alcadeias/Alcadeias`) — the **HAM = Heiken-Ashi
-> Martingale** strategy, to be reproduced **100% exact**, adapted from MT5
-> **hedging** to Fyers **netting** (buy-only, clubbed & averaged).
-> **Cross-ref:** existing Fyers port on `dev_trading` + `FYERS_PNL_LOGIC.md`.
-> **Last updated:** 2026-11-02
+> **Status:** 🟢 Implemented
+> **Source of truth:** Alcadeias MT5 bot, branch `rsimacd_h6_btcusd1_wd_exp_h`
+> (`C:/Users/sings213/Alcadeias/Alcadeias`) — the **RSI+MACD slope** strategy
+> (SHA removed), reproduced exactly, adapted from MT5 **hedging** to Fyers
+> **netting** (buy-only, clubbed & averaged).
+> **Variant B (HEDGING):** profit booked at a **fixed tax-aware ₹ target**
+> (`₹100×units + charges`, the current-Fyers rule). The sibling `fyers_netting_*`
+> branches book on a BOOK-score reversal instead (variant A) — everything else is
+> identical.
+> **Last updated:** 2026-11-03
 
 This documents *what* the strategy does. See [ARCHITECTURE.md](ARCHITECTURE.md)
 for the engine it plugs into. Every change is logged in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
-## 1. The HAM strategy (exactly as Alcadeias)
+## 1. The RSI+MACD slope strategy (exactly as Alcadeias)
 
-A mean-reversion **martingale/DCA ladder** driven by Smoothed-Heiken-Ashi
-direction and multi-timeframe RSI extremes.
+No SHA. Direction is read from **latest-pivot slopes** of RSI and the MACD
+histogram across several timeframes, combined into **per-section weighted scores**
+that drive entry and force-close. A mean-reversion **Fibonacci DCA ladder** (RSI
+extremes) averages into an open basket, which is booked at a fixed ₹ target.
 
 ### 1.1 Indicators (`indicator.py`, reproduced verbatim)
-| Indicator | Config (Alcadeias) | Purpose |
+| Indicator | Config | Purpose |
 |---|---|---|
-| **Signal SHA** | SHA-v3, `TEMA`, length **10**, on **M5** candles | direction (bull/bear) |
-| **Trend SHA** | SHA-v3, `DEMA`, length **20**, on **M5** candles | trend confirm |
-| **RSI** | `RMA`, length **14**, multi-timeframe | entry filter + DCA gating |
-| **ADX/ATR** (regime) | length 14, M5 | optional fresh-entry gate (OFF by default) |
+| **RSI** | `RMA`, length **14** | DCA ladder tiers + RSI pivot slopes |
+| **MACD** | TV `ta.macd` **12 / 26 / 9** (SMA-seeded EMA) → `macd, signal, hist` | MACD-histogram pivot slopes |
+| **latest_pivot_slope** | lookback **20**, pivot width **2** | sign (+/−/0) of the newest confirmed pivot → now |
 
-SHA-v3 = pre-smooth OHLC → Heiken-Ashi → post-smooth (same length/MA). TV-compatible
-MAs (SMA-seeded EMA/RMA; DEMA/TEMA chains). **Port the `Indicator` class 1:1.**
+**latest_pivot_slope** scans back from the newest *confirmable* bar and returns the
+**first** turning point (the latest pivot, not the largest): a bar strictly above
+(high) / below (low) the `width=2` bars on both sides. Slope =
+`(current − pivot_value) / bars_since_pivot`; `sign` = +1 / −1 / 0.
+- **RSI** pivots only count inside the OB/OS bands: a HIGH needs value ≥ **`RSI_PEAK_OB=60`**,
+  a LOW needs value ≤ **`RSI_PEAK_OS=40`** (neutral 41–59 wiggles ignored).
+- **MACD** histogram is unbounded; the **signal line's sign picks the side** —
+  `signal > 0` → read the HIGH side, `signal < 0` → the LOW side.
 
-### 1.2 Signals
+Slopes are computed on the **index** for `SLOPE_TIMEFRAMES` = **M5, M15, H1, H4, D1**
+(the de-duplicated union of the sections' timeframes; D1 is the only extra fetch —
+M5/M15/H1/H4 are already pulled for the RSI ladder).
+
+### 1.2 Per-section weighted scores (`strategy._weighted_score`)
+Each decision **section** has its own `{timeframe: weight}` map; its score is the RAW
+weighted sum of the latest-pivot signs, range **±(2·Σ|weight|)**:
+
+```
+score = Σ_tf  weight_tf · (rsi_sign_tf + macd_sign_tf)      each sign ∈ {−1, 0, +1}
+```
+
+| Section | Timeframes · weights (`constants.py`) | Range | Threshold | Used for |
+|---|---|---|---|---|
+| **OPEN** | `{H4:1, M5:1}` | ±4 | `ENTRY_S=2`, `LADDER_S=2` | fresh entry + ladder-add gate |
+| **FORCE_CLOSE** | `{M15:4, H1:3, H4:2, D1:1}` | ±20 | `FORCE_CLOSE_S=12` | force-close |
+
+(There is **no BOOK section** in variant B — the profit exit is the fixed ₹ target,
+not a score. `BOOK_SCORE_WEIGHTS` is still defined in `constants.py` for parity but
+unused here.)
+
+**grey_fill** (OPEN only): if exactly one of a timeframe's two signs is 0 (its RSI or
+MACD is at a peak/plateau — pivot undefined), the grey sign borrows the other
+indicator's direction, so a TF clear on one indicator counts as a **full** aligned
+vote (±2·w) instead of half. Both grey → the TF stays 0. FORCE_CLOSE uses **raw**
+signs (no grey_fill).
+
+### 1.3 Signals
 `DO_NOTHING, BUY, SELL, CLOSE_BUY, CLOSE_SELL, BUY_MORE, SELL_MORE`.
 
-**Entry (only when FLAT — both directions have 0 positions):**
-- `BUY`  if signal-SHA[0] bullish **and** trend-SHA[0] bullish, **and** no MTF-RSI block, (and regime allows).
-- `SELL` if signal-SHA[0] bearish **and** trend-SHA[0] bearish, **and** no MTF-RSI block.
-- **MTF-RSI entry filter:** block BUY if **any** of M1/M5/M15/M30 RSI ≤ 35; block SELL if **any** ≥ 65.
+**Entry (only when FLAT — both legs 0) — the agreement gate:**
+- `BUY`  if `open_score ≥ +ENTRY_S` **and** `fc_score ≥ +ENTRY_AGREE_S` (`=0`).
+- `SELL` if `open_score ≤ −ENTRY_S` **and** `fc_score ≤ −ENTRY_AGREE_S`.
+- else **WAIT**. When OPEN wants in but FORCE-CLOSE opposes (chop), the bot WAITS
+  rather than open-then-instantly-force-close (`entry_chop_block` telemetry).
+- **Cooldown:** a fresh entry is blocked for **`REENTRY_COOLDOWN_SECONDS=300`** after
+  any close (`entry_allowed=False`).
 
-**Ladder / DCA (one direction open) — max 6 positions:**
+**Ladder / DCA (one side open) — max 6 positions.** Exits are checked FIRST (close
+beats add); the add is gated so it only averages in while OPEN is **not** strongly
+adverse (`buy_add_ok = open_score > −LADDER_S`):
+
 | Position count | Add trigger (BUY side) | Action |
 |---|---|---|
-| close check (any) | `basket_profit > close_threshold` | `CLOSE_BUY` |
+| profit target (checked first) | `cycle_pl > close_threshold` | `CLOSE_BUY` (reason `target`) |
+| force-close (checked next) | `fc_score ≤ −FORCE_CLOSE_S` | `CLOSE_BUY` (reason `force_close`) |
 | 1 | RSI **M1** ≤ 35 | `BUY_MORE` |
 | 2 | RSI **M5** ≤ 35 | `BUY_MORE` |
 | 3 | RSI **M15** ≤ 35 | `BUY_MORE` |
 | 4 | RSI **H1** ≤ 35 | `BUY_MORE` |
 | 5 | RSI **H4** ≤ 35 | `BUY_MORE` |
-| 6 | RSI **H6** ≤ 35 | `CLOSE_BUY` (final forced close) |
 
-SELL side is the mirror (RSI ≥ 65). Adds are **RSI-gated, not loss-gated**
-(matches Alcadeias; the `fibo²×hedge` loss threshold is unused dead code in both).
+SELL side is the mirror (RSI ≥ 65; `fc_score ≥ +FORCE_CLOSE_S`). After 5 adds (6
+positions) there are no further ladder tiers — the basket is held until the target or
+force-close fires. There is **no H6 final-close** (that was the HAM design);
+force-close replaces it.
 
-### 1.3 Fibonacci volume ladder
-Positions are opened as the fib sequence `[1,2,3,5,8,13,…]` × base:
-- **Entry** = `1 × base`; **adds** = `2, 3, 5, 8, 13 × base` (fib[1..5]).
-- `base` scales with the running **unit** (§3). Cumulative after 6 = `32 × base`.
+### 1.4 Fibonacci volume ladder
+Unchanged from the Fyers base. Positions are opened as the fib sequence
+`[1,2,3,5,8,13,…] × base`: **entry** = `1 × base`, **adds** = `2,3,5,8,13 × base`
+(`FIB[mg+1] × units × lot` in `symbol_worker._add_leg`). `base` scales with the
+running **unit** (§3).
 
-### 1.4 Profit booking (close target)
-Close the whole basket when `basket_profit > close_threshold`.
-- **Alcadeias:** `close_threshold = units` → **$units** (i.e. +$1 per unit, "+1 USD per 0.01 lot").
-- **Fyers (tax-aware):** `close_threshold = ₹(HEDGE_PER_UNIT × units) + charges`, with
-  **`HEDGE_PER_UNIT = 100`** → +₹100 per unit, **plus** estimated taxes/charges (§4),
-  because Fyers deducts STT/GST/etc. that MT5 forex does not.
+### 1.5 Profit booking — **variant B (fixed ₹ target)**
+Close the whole basket the moment it clears the tax-aware target:
+
+```
+buy_profit > close_threshold   → CLOSE_BUY ('target')
+```
+
+- `close_threshold = ₹(HEDGE_PER_UNIT × units) + charges` with **`HEDGE_PER_UNIT=100`**
+  → **+₹100 per unit plus estimated taxes/charges** (§4), so the booked trade nets
+  **≥ ₹100×units**. As the balance tier raises `units`, the target scales up
+  (unit 1 → ~₹100, unit 2 → ~₹200, …), exactly the current-Fyers booking rule.
+- This is the Alcadeias `buy_profit > close_threshold` (+$unit) target, with the
+  `$unit` target replaced by the tax-aware Fyers target. **No BOOK-score reversal.**
+- Checked **before** the force-close.
+
+> **Variant A (`fyers_netting_*`)** keeps the same floor but **also** requires a
+> `book_score` reversal (`M15`) before booking, so winners run until momentum turns.
+> That is the only difference between the two branch pairs.
 
 ---
 
 ## 2. Hedging → Netting adaptation (buy-only, clubbed & averaged)
 
-MT5 holds many discrete hedged tickets; Fyers **nets** everything into one
-averaged position per instrument. We only ever **BUY options**.
+Fyers is a **netting**, buy-only options account, so the MT5 hedge is expressed as
+two independent buy-only legs on the **index options**:
 
-| Alcadeias (hedging) | Fyers (netting) |
+| Strategy signal | Fyers action |
 |---|---|
-| `BUY` basket (bullish) | **BUY CE** leg |
-| `SELL` basket (bearish) | **BUY PE** leg |
-| `BUY_MORE` / `SELL_MORE` (new ticket) | **add qty to the same leg** → Fyers averages `buyAvg` |
-| `CLOSE_BUY` / `CLOSE_SELL` (close all tickets) | **SELL to close** the CE / PE leg |
-| per-ticket `profit`, `count` | reconstructed from `martingale_count` + `effective_pl` (netting hides tickets) |
+| `BUY` / `BUY_MORE` / `CLOSE_BUY` | buy / add-average / sell the **CE** leg |
+| `SELL` / `SELL_MORE` / `CLOSE_SELL` | buy / add-average / sell the **PE** leg |
 
-- **Direction source:** index SHA decides the leg — bullish → trade **CE**, bearish → **PE**.
-  Entry requires both legs flat, so **only one leg is active at a time** (exactly mirrors
-  Alcadeias opening a fresh basket only when flat).
-- **Ladder level** can't be counted from Fyers positions (they're merged), so it's
-  tracked in `position_tracker.json` as `martingale_count` (as the existing port does).
-- **Per-cycle P&L (netting):** Fyers blends averages across re-entries, so use
-  **`effective_pl = api_total_pl − booked_profit`** (see `FYERS_PNL_LOGIC.md`). `booked_profit`
-  is snapshotted on each **confirmed** close (`netQty == 0`).
-
-### 2.1 Signal → Fyers order mapping
-| Signal | Fyers action |
-|---|---|
-| `BUY` (CE entry) | `fyers.buy(CE_sym, entry_qty)` → `tracker.record_entry` |
-| `SELL` (PE entry) | `fyers.buy(PE_sym, entry_qty)` → `record_entry` |
-| `BUY_MORE` / `SELL_MORE` | `fyers.buy(leg_sym, fib_add_qty)` → `record_martingale` |
-| `CLOSE_BUY` / `CLOSE_SELL` | `fyers.sell(leg_sym, net_qty)` → `mark_pending_close`; on `netQty==0` → `confirm_close` (snapshot `booked_profit`) |
-
-Product type = **MARGIN/NRML (carry)** — positions may be held overnight (§5).
+Per-cycle P&L is a **self-tracked cost basis** (carry-safe), not the broker's booked
+field: `cycle_pl = ltp × net_qty − cost_basis` (`position_tracker.py`). `cycle_pl`
+is what the strategy sees as `total_profit`, and the close books
+`net = gross − charges` into `profit_history.json`.
 
 ---
 
-## 3. Position sizing — balance-tiered units (NEW vs dev_trading)
-
-`units` scales both lot size **and** the ₹ profit target together, from the live
-balance. **Re-derived only when the leg is FLAT** (an open basket keeps its unit).
-
-```
-lot_size   = CSV "Minimum lot size" for the leg symbol   (e.g. NIFTY = 65)
-units      = min( floor(balance / STEP_UP_BALANCE) + 1, UNIT_MAX_LIMIT )  # Alcadeias (O1 ✓)
-entry_qty  = units × lot_size
-add_qty(L) = fib[L] × units × lot_size                     # fib = 1,2,3,5,8,13
-target     = HEDGE_PER_UNIT × units + charges(qty, ltp)    # HEDGE_PER_UNIT = ₹100
-```
-
-Worked example (NIFTY, `lot_size` from CSV, `STEP_UP_BALANCE = 1,00,000`, floor+1;
-`65` below is illustrative — the real lot size is read from the NSE CSV):
-| Balance | units | entry_qty | profit target |
-|---|---|---|---|
-| < ₹1,00,000 | 1 | 1×lot (e.g. 65) | **₹100 + taxes** |
-| ₹1L – <₹2L | 2 | 2×lot (e.g. 130) | **₹200 + taxes** |
-| ₹2L – <₹3L | 3 | 3×lot (e.g. 195) | ₹300 + taxes |
-
-Config (per symbol, in `symbols.json`): `step_up_balance`, `unit_max_limit`,
-`lot_size` auto-read from the cached NSE CSV (not hard-coded).
+## 3. Position sizing — balance-tiered units
+`units = min(floor(balance / STEP_UP_BALANCE) + 1, UNIT_MAX_LIMIT)` with
+`STEP_UP_BALANCE = ₹100,000` and `UNIT_MAX_LIMIT = 10` (per-symbol override in
+`symbols.json`). Units are fixed at entry and drive both the Fibo lot ladder and the
+`close_threshold` target. The per-contract lot comes from the downloaded NSE/MCX CSV.
 
 ---
 
-## 4. Charges / taxes (exact — from dev_trading `constants.py`)
-
-```python
-def estimate_trade_charges(qty, ltp, num_orders=2):
-    turnover  = abs(qty) * ltp
-    brokerage = 20.0 * num_orders                   # ₹20 flat per order
-    stt       = 0.000625 * turnover                 # 0.0625% (sell-side options)
-    exchange  = 0.000495 * turnover * 2             # ~0.0495% both sides
-    sebi      = (turnover * 2 / 1_00_00_000) * 10.0 # ₹10 per crore, both sides
-    gst       = 0.18 * (brokerage + exchange + sebi)# 18%
-    stamp     = 0.00003 * turnover                  # 0.003% buy-side
-    return round(brokerage + stt + exchange + gst + stamp + sebi, 2)
-```
-`num_orders = 2 + martingale_count` (entry + exit + each add). This is the "taxes"
-added to the ₹100×units target so **net** booked profit ≥ ₹100×units.
+## 4. Charges / taxes (tax-aware target)
+`estimate_trade_charges(qty, price, num_orders)` (`constants.py`, verified against
+fyers.in/charges-list) sums brokerage (₹20, ₹15 Prime), STT 0.15% sell, exchange txn
+0.0355299% (NSE), SEBI ₹10/cr, stamp 0.003% buy, GST 18%. It feeds both the ₹ target
+and the booked `net_pl`.
 
 ---
 
-## 5. Carry / delivery handling (your point 8) — ✅ handled
-
-Positions are **carried** (held overnight, product = MARGIN/NRML). To stay correct
-across the day boundary, `position_tracker.py` uses a **self-tracked cost-basis**
-model instead of Fyers' intraday `pl − booked_profit`:
-
-    cycle_pl = ltp × net_qty − cost_basis       # open-basket P&L, day-independent
-    realized = exit_price × net_qty − cost_basis
-
-`cost_basis`/`net_qty` are built from our own fills (fill price from the **tradebook**,
-fallback ltp) and are **preserved across day-change for any open leg** (only fully-closed
-legs reset). This is immune to the midnight reset and to Fyers' blended-average
-contamination after same-day re-entry. On restart, a carried position is adopted and its
-cost basis seeded from the broker avg.
-
-The worker's "scan once/day if flat; else manage/close first" rule (ARCHITECTURE §5)
-means a carried position is **managed to close before any new scan**.
-
-⚠️ Fill-price accuracy (tradebook) is the one item to confirm during the live dry-run.
-
----
-
-## 6. Dashboard — P/L booking graph (your request)
-
-Reproduce the **Alcadeias MT5 chart** (`_alc_ref/dashboard.py:_build_daily_chart`),
-**per symbol/asset**, from `profit_history.json` (filter `action == "CLOSE"`):
-- **Row 1 — bar per booking:** one bar per closed basket; **green if ≥0, red if <0**;
-  X = close time, Y = `effective_pl` (net booked ₹). *This is the "every profit/loss
-  booking" graph you asked for.*
-- **Row 2 — cumulative spline + drawdown:** running sum (area fill) + gold **peak** line
-  + red **drawdown** fill (peak − cumulative).
-- **Per-asset:** one chart per symbol (NIFTY / GOLD / SILVER), selectable.
-- Plus the **API-usage meter** panel (ARCHITECTURE §6). All read-only from state files.
-
----
-
-## 7. Divergences from the existing `dev_trading` port (to reconcile for "100% exact")
-
-| Aspect | dev_trading (now) | Alcadeias (target) | Plan |
-|---|---|---|---|
-| Ladder depth | 3 adds (M1/M5/M15) | 5 adds (M1/M5/M15/H1/H4) + **H6 forced close** | **adopt Alcadeias (6 levels)** |
-| Entry gates | SHA + **GAP% + relationship DIVERGING** + RSI | SHA + MTF-RSI filter (+ regime off) | **drop GAP%/relationship** (not in Alcadeias) |
-| Signal source | per-leg CE/PE/idx (`signal_state.json`) | one instrument's SHA+RSI | **compute on the index** (⚠️ confirm §8 O2) |
-| Position sizing | `qty` from `option_pairs.json` (no tiers) | `units` from balance | **add balance-tier units** |
-| Close target | flat `hedge(500) + charges` | `units × target + charges` | **₹100 × units + charges** |
-| Day reset / carry | wipes `booked_profit` | 24/7, carries | **self-tracked cost basis**, preserved across midnight ✓ (§5) |
-| H6 RSI timeframe | n/a | 360-min | **resampled from 60-min** (360 not native) ✓ |
-
----
-
-## 8. Open decisions (confirm before implementation)
-
-- **O1 — units formula.** ✅ RESOLVED: `units = min(floor(balance/100000)+1, UNIT_MAX_LIMIT)`
-  (step = ₹1L). Tiers: `<1L→1` (1×lot), `1L–2L→2` (2×lot), `2L–3L→3` (3×lot), …
-  `lot` is the CSV minimum lot size (not hard-coded).
-- **O2 — signal source.** ✅ RESOLVED (2026-11-02): compute SHA + MTF-RSI on the
-  **index** (`NSE:NIFTY50-INDEX`); bullish→CE, bearish→PE. Commodity uses its own index.
-- **O3 — ladder depth 6** (5 RSI adds M1/M5/M15/H1/H4 + H6 forced close): taken as
-  decided per "100% exact Alcadeias".
-- **O4 — commodities** wired: GOLD/SILVER futures + session auto-resolved from the MCX
-  master CSV (DST-correct). `enabled:false` until a live optionchain confirm + `hedge_per_unit`
-  tuning (GOLD lot_size=1 → ₹100/unit target likely too small).
+## 5. Data flow per tick (`symbol_worker._tick`)
+1. Resolve underlying (commodity future from MCX CSV; index as-is) + trading-window guard.
+2. Close-first: if a close is pending, confirm it (and start the cooldown) before anything else.
+3. `_leg_state_and_threshold()` → leg `buy_pos`/`sell_pos` from cost basis + `close_threshold`.
+4. `_slopes_and_rsi()` → per-TF RSI (ladder tiers) + RSI/MACD latest-pivot slopes
+   (one fetch per TF, **cached per bar** so the DATA budget is respected).
+5. `calculate_signal(... slopes, entry_allowed ...)` → BUY/SELL/ADD/CLOSE + analysis.
+6. `_execute()` maps the signal to the CE/PE leg; the dashboard payload is written
+   (scores, per-TF slope arrows, entry direction, RSI, pair, position).
