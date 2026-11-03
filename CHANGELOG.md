@@ -1,5 +1,22 @@
 # CHANGELOG — `fyers_live` / `fyers_demo`
 
+## 2026-11-03 — Dashboard: RSI DCA-ladder bars + next-position gauge + ₹ profit meter
+
+More detailed per-symbol panel (symbols stay dynamic — rendered from whatever the workers write
+to signal_state):
+- **RSI DCA LADDER:** every ladder timeframe (M1/M5/M15/H1/H4) shown as a 0–100 bar with faint
+  OS/OB zones and the add-side threshold line; the next add tier is ring-highlighted.
+- **NEXT-ADD / FINAL-CLOSE gauge:** while a basket is open, a prominent meter for the next tier's
+  RSI vs its OB/OS trigger, with the distance (RSI points) to the next position (or the H6 final
+  forced close).
+- **₹ PROFIT→BOOK meter:** live cycle P&L vs the ₹100×units + tax target, with a % / BOOKABLE chip.
+- Position block adds level, positions used (n/6) and basket age. SHA signal/trend kept (the HAM
+  entry indicator).
+- **Worker:** `_rsi_mtf` now fetches the full multi-timeframe RSI set (entry filter + all ladder
+  tiers + H6), cached per bar so the DATA budget stays bounded; the signal payload adds `ladder`
+  (next tier / side / is_final), `close_threshold`, and position count/max/age.
+- Verified: compiles on Python 3.11; panels render for flat / mid-ladder / final-close states.
+
 ## 2026-11-03 — Docs: BRANCHES.md system & branch map
 
 - Added **BRANCHES.md** — a self-contained map of the whole bot: all six branches
