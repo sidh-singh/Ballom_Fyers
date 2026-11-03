@@ -206,7 +206,7 @@ RSI_DCA_MAX_POSITIONS     = 1
 TIMEFRAME_TO_FYERS_RES = {
     'TIMEFRAME_M1': '1', 'TIMEFRAME_M5': '5', 'TIMEFRAME_M15': '15',
     'TIMEFRAME_M30': '30', 'TIMEFRAME_H1': '60', 'TIMEFRAME_H4': '240',
-    'TIMEFRAME_H6': '360',
+    'TIMEFRAME_H6': '360', 'TIMEFRAME_D1': 'D',
 }
 
 # ── Position sizing — balance-tiered units (Alcadeias floor+1, O1 ✓) ──
@@ -221,6 +221,53 @@ PRODUCT_TYPE         = "MARGIN" # carry / overnight
 # Which funds() rows (title, lowercase substring, priority order) to read as the
 # balance that drives unit tiers. Confirm against your Fyers funds screen.
 BALANCE_SOURCE_TITLES = ["total balance", "available balance"]
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  STRATEGY — RSI+MACD slope engine  (ported from Alcadeias rsimacd_*_wd_exp_h)
+#  SHA removed. Entry/force-close/ladder-add decided by per-section weighted slope
+#  scores built from RSI + MACD-histogram latest-pivot slopes; profit-book differs
+#  by branch (NETTING = book-score reversal; HEDGING = ₹100×units+charges target).
+#  See TRADING_LOGIC.md / docs mirror of the 4H·1H·15M decision table.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ── MACD (RSI+MACD slope entry engine) ──
+MACD_FAST   = 12               # fast EMA length (TradingView ta.macd default)
+MACD_SLOW   = 26               # slow EMA length
+MACD_SIGNAL = 9                # signal EMA length
+
+# ── Per-section score thresholds (RAW weighted-sum units; see *_SCORE_WEIGHTS) ──
+# Each decision SECTION has its OWN timeframe set; its score is the RAW weighted sum,
+# range ±(2*Σ|weight|). Thresholds below are in those RAW units — change a section's
+# timeframes and re-check its threshold.
+ENTRY_S       = 2              # |open_score| to OPEN. OPEN range ±4 (H4+M5, w1+w1); +2 = one TF fully aligned.
+ENTRY_AGREE_S = 0              # agreement gate: force-close score must not oppose the open (BUY needs fc_score >= +0).
+LADDER_S      = 2              # DCA ladder add blocked once OPEN score is this far adverse (BUY add needs open_score > -2).
+FORCE_CLOSE_S = 12             # force-close when FORCE-CLOSE score is this far AGAINST (range ±20 for 4/3/2/1; BUY close fc_score <= -12).
+BOOK_S        = 1              # profit-book (NETTING only): in profit, book when BOOK score reverses this far (range ±2; BUY book_score <= -1).
+
+# ── Per-section timeframe weights (config-driven). Short keys M5/M15/H1/H4/D1. ──
+#   OPEN        -> fresh entry + the DCA ladder-add gate   (grey_fill on)
+#   BOOK        -> profit-book (NETTING only; HEDGING books via the ₹ target)  (grey_fill on)
+#   FORCE_CLOSE -> force-close  (raw signs; the original 4/3/2/1 set == old exit_score)
+OPEN_SCORE_WEIGHTS        = {'H4': 1, 'M5': 1}
+BOOK_SCORE_WEIGHTS        = {'M15': 1}
+FORCE_CLOSE_SCORE_WEIGHTS = {'M15': 4, 'H1': 3, 'H4': 2, 'D1': 1}
+
+# Slope fetch list (auto-derived union of every TF named in any section above),
+# mapped short-key -> 'TIMEFRAME_<key>'. Adding a TF to a section dict is enough.
+# NOTE: D1 is not fetched elsewhere, so it costs +1 Fyers history call per bar; M5/
+# M15/H1/H4 are already fetched for the RSI ladder, so they are free.
+SLOPE_TIMEFRAMES = ['TIMEFRAME_' + _tf for _tf in dict.fromkeys(
+    _k for _d in (OPEN_SCORE_WEIGHTS, BOOK_SCORE_WEIGHTS, FORCE_CLOSE_SCORE_WEIGHTS) for _k in _d
+)]
+
+# ── Pivot-slope params (RSI + MACD-histogram) ──
+PEAK_LOOKBACK = 20             # candles scanned for the latest pivot
+PIVOT_WIDTH   = 2              # bars required on each side to confirm a pivot (k)
+RSI_PEAK_OB   = 60             # a HIGH pivot on RSI counts only if value >= this (MACD stays unbounded)
+RSI_PEAK_OS   = 40             # a LOW  pivot on RSI counts only if value <= this
+
+REENTRY_COOLDOWN_SECONDS = 300 # block a fresh entry for this long after any close
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  CHARGES / TAXES  (exact, from dev_trading constants.py)
