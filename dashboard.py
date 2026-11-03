@@ -273,7 +273,9 @@ def booking_chart(asset, closes):
         fig.add_trace(go.Bar(x=labels, y=profits, marker=dict(color=colors),
                              hovertext=hover, hoverinfo="text", showlegend=False), row=1, col=1)
         cc = C["green"] if c >= 0 else C["red"]
-        fig.add_trace(go.Scatter(x=labels, y=cum, mode="lines", line=dict(color=cc, width=2, shape="spline"),
+        fig.add_trace(go.Scatter(x=labels, y=cum, mode="lines+markers",
+                                 line=dict(color=cc, width=2, shape="spline"),
+                                 marker=dict(size=6, color=cc, line=dict(width=1, color=C["bg"])),
                                  fill="tozeroy", fillcolor="rgba(124,58,237,0.06)",
                                  showlegend=False, hoverinfo="skip"), row=2, col=1)
         fig.add_trace(go.Scatter(x=labels, y=peaks, mode="lines",

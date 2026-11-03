@@ -1,5 +1,10 @@
 # CHANGELOG — `fyers_live` / `fyers_demo`
 
+## 2026-11-03 — Dashboard fix: single-close cumulative visible
+
+- Booking-chart cumulative trace now `lines+markers`, so a lone close renders as a dot
+  (a single point in `lines` mode drew nothing). Applied to fyers_demo + fyers_live.
+
 ## 2026-11-03 — Rich dashboard + engine analysis state (demo)
 
 - Demo balance → **₹90,000**; enabled **NIFTY + GOLDM + SILVERM** (mini contracts) for testing.
