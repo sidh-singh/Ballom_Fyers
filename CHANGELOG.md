@@ -1,5 +1,21 @@
 # CHANGELOG — `fyers_live` / `fyers_demo`
 
+## 2026-11-03 — Fix: commodity fib-DCA ladder never added (RSI used wrong symbol)
+
+- `symbol_worker._rsi_one` fetched `self.underlying` (the placeholder `MCX:GOLDM-FUT`)
+  instead of `self._active_underlying` (the resolved future, e.g. `MCX:GOLDM26DECFUT`).
+  The invalid symbol threw → RSI fell back to **50.0** → GOLDM/SILVERM never hit OS/OB →
+  the **fibonacci DCA ladder never added** (1→2→3→5→8→13). NIFTY's underlying is valid so
+  it was unaffected. Now uses the resolved underlying.
+- Verified: commodity RSI resolves to a real value and `BUY_MORE` fires at count 1 (M1) /
+  2 (M5) / 3 (M15) on oversold; no add at neutral RSI.
+
+## 2026-11-03 — Plan-aware limits/brokerage (Standard/Prime) + dashboard indicator
+
+- API plan config-driven (`symbols.json "api_plan"`: standard|prime|auto); Prime raises
+  API limits + lowers brokerage ₹20→₹15 (taxes unchanged); dashboard shows plan badge +
+  renewal countdown (`prime_renewal` date — Fyers has no renewal API).
+
 ## 2026-11-03 — Per-trade tax / gross / net + Fyers-verified rates
 
 - **Tax rates corrected to Fyers' published charges** (fyers.in/charges-list, fetched
