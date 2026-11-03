@@ -1,5 +1,16 @@
 # CHANGELOG — `fyers_live` / `fyers_demo`
 
+## 2026-11-03 — Docs: BRANCHES.md system & branch map
+
+- Added **BRANCHES.md** — a self-contained map of the whole bot: all six branches
+  (`fyers_live`/`fyers_demo` + the four RSI+MACD netting/hedging branches), the module
+  map, the two-loop engine architecture, both strategy families (HAM vs RSI+MACD),
+  position sizing, the tax model, API throttling limits, environment + run steps, and
+  the git topology. Written so the system can be maintained from the repo alone,
+  without any external/chat history.
+- Policy going forward: every change lands with a detailed CHANGELOG entry **and** a
+  docs update (`TRADING_LOGIC.md` / `ARCHITECTURE.md` / `BRANCHES.md`).
+
 ## 2026-11-03 — Fix: commodity fib-DCA ladder never added (RSI used wrong symbol)
 
 - `symbol_worker._rsi_one` fetched `self.underlying` (the placeholder `MCX:GOLDM-FUT`)
