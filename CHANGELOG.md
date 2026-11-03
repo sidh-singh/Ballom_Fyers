@@ -1,5 +1,17 @@
 # CHANGELOG — `fyers_live` / `fyers_demo`
 
+## 2026-11-03 — Per-trade tax / gross / net + Fyers-verified rates
+
+- **Tax rates corrected to Fyers' published charges** (fyers.in/charges-list, fetched
+  2026-11-03): STT 0.0625%→**0.15%** (sell premium), exchange txn 0.0495%→**0.0355299%**
+  (NSE, incl. IPFT); brokerage ₹20/order, SEBI ₹10/cr, stamp 0.003% buy, GST 18% unchanged.
+  (≈ ₹75.7 round-trip on 65 × ₹185.)
+- Each close records **gross, tax, net (actual)** in `profit_history.json`; `realized_total`
+  now accumulates **net**.
+- Dashboard: booking bars = **net after tax** with Gross/Tax/Net hover; KPI row adds
+  **Taxes (today)** + **Realised net (today)**; each symbol shows gross/tax/net booked.
+- Verified: charges ₹75.71; gross 325 → tax 75 → net 250 through tracker → history → chart.
+
 ## 2026-11-03 — Dashboard fix: single-close cumulative visible
 
 - Booking-chart cumulative trace now `lines+markers`, so a lone close renders as a dot

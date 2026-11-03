@@ -131,15 +131,17 @@ class PositionTracker:
             self._hist(symbol, self.cycle_pl(symbol, price), add_qty, "MARTINGALE",
                        ltp=price, avg=e["avg_cost"])
 
-    def record_close(self, symbol: str, exit_price: float) -> float:
-        """Book the full close at *exit_price*; returns realized ₹ for the cycle."""
+    def record_close(self, symbol: str, exit_price: float, charges: float = 0.0) -> float:
+        """Book the full close at *exit_price* with *charges* (estimated tax).
+        Records gross P&L, tax and net; returns NET realized ₹ for the cycle."""
         with self._lock:
             e = self._entry(symbol)
             net = int(e.get("net_qty", 0))
-            realized = round(exit_price * net - e.get("cost_basis", 0.0), 2)
+            gross = round(exit_price * net - e.get("cost_basis", 0.0), 2)
+            net_pl = round(gross - charges, 2)
             e["close_count"] = e.get("close_count", 0) + 1
-            e["realized_total"] = round(e.get("realized_total", 0.0) + realized, 2)
-            e["last_cycle_profit"] = round(max(0.0, realized), 2)
+            e["realized_total"] = round(e.get("realized_total", 0.0) + net_pl, 2)  # NET
+            e["last_cycle_profit"] = round(net_pl, 2)
             e["last_close_time"] = self._ts()
             e["net_qty"] = 0
             e["cost_basis"] = 0.0
@@ -147,8 +149,9 @@ class PositionTracker:
             e["side"] = 0
             e["martingale_count"] = 0
             self._save()
-            self._hist(symbol, realized, net, "CLOSE", ltp=exit_price, avg=exit_price)
-            return realized
+            self._hist(symbol, gross, net, "CLOSE", ltp=exit_price, avg=exit_price,
+                       charges=charges, net_pl=net_pl)
+            return net_pl
 
     def seed_from_broker(self, symbol: str, net_qty: int, avg_price: float, side: int) -> None:
         """Adopt a position opened outside the tracker (manual/restart): approximate
@@ -187,13 +190,17 @@ class PositionTracker:
                        self.get_net_qty(symbol), "SNAPSHOT", ltp=ltp)
 
     # ── history ─────────────────────────────────────────────────────────────
-    def _hist(self, symbol, effective_pl, qty, action, ltp=0.0, avg=0.0) -> None:
+    def _hist(self, symbol, effective_pl, qty, action, ltp=0.0, avg=0.0,
+              charges=0.0, net_pl=None) -> None:
         entries = self._read_json(self._history_file)
         if not isinstance(entries, list):
             entries = []
         entries.append({
             "timestamp": self._ts(), "date": today_ist().isoformat(), "symbol": symbol,
-            "effective_pl": round(effective_pl, 2), "qty": qty, "action": action,
+            "effective_pl": round(effective_pl, 2),          # gross
+            "charges": round(charges, 2),                    # estimated tax
+            "net_pl": round(net_pl if net_pl is not None else effective_pl, 2),  # actual
+            "qty": qty, "action": action,
             "ltp": round(ltp, 2), "avg_price": round(avg, 2),
         })
         if len(entries) > self.MAX_HISTORY_ENTRIES:

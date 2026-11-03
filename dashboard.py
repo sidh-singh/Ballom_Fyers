@@ -101,8 +101,9 @@ def kpi_row():
     acct = _read(ACCOUNT_STATE_FILE, {}) or {}
     hist = _read(PROFIT_HISTORY, []) or []
     today = now_ist().date().isoformat()
-    realized = round(sum(float(r.get("effective_pl", 0)) for r in hist
-                         if r.get("action") == "CLOSE" and r.get("date") == today), 2)
+    closes_today = [r for r in hist if r.get("action") == "CLOSE" and r.get("date") == today]
+    realized = round(sum(float(r.get("net_pl", r.get("effective_pl", 0))) for r in closes_today), 2)
+    taxes = round(sum(float(r.get("charges", 0)) for r in closes_today), 2)
     bal = float(acct.get("balance", 0))
     eq = float(acct.get("equity", bal))
     margin = float(acct.get("margin_used", 0))
@@ -113,7 +114,8 @@ def kpi_row():
         ("Equity", f"₹{eq:,.0f}", C["teal"]),
         ("Margin used", f"₹{margin:,.0f}", C["amber"]),
         ("Unrealised", f"₹{unreal:,.2f}", _pl_color(unreal)),
-        ("Realised (today)", f"₹{realized:,.2f}", _pl_color(realized)),
+        ("Realised net (today)", f"₹{realized:,.2f}", _pl_color(realized)),
+        ("Taxes (today)", f"₹{taxes:,.2f}", C["purple"]),
         ("Total P&L", f"₹{total:,.2f}", _pl_color(total)),
     ]
     cells = [_card([
@@ -250,7 +252,17 @@ def symbol_panel(symbol, s, closes):
         _rsi_block(s.get("rsi", {})),
         _position_block(s.get("position")),
     ], extra={"flex": "1.1"})
-    right = _card([booking_chart(symbol, closes)], pad="8px", extra={"flex": "1.4"})
+    g = sum(float(r.get("effective_pl", 0)) for r in closes)
+    tx = sum(float(r.get("charges", 0)) for r in closes)
+    n = round(sum(float(r.get("net_pl", r.get("effective_pl", 0))) for r in closes), 2)
+    booked_line = html.Div([
+        html.Span(f"{len(closes)} closes today", style={"color": C["dim"], "fontSize": "11px"}),
+        html.Span(f"gross ₹{g:,.0f}", style={"color": C["dim"], "fontSize": "11px", "marginLeft": "10px"}),
+        html.Span(f"tax ₹{tx:,.0f}", style={"color": C["purple"], "fontSize": "11px", "marginLeft": "10px"}),
+        html.Span(f"net ₹{n:,.2f}", style={"color": _pl_color(n), "fontSize": "13px",
+                  "fontWeight": "800", "marginLeft": "10px"}),
+    ], style={"padding": "4px 10px 2px"})
+    right = _card([booked_line, booking_chart(symbol, closes)], pad="8px", extra={"flex": "1.4"})
     return html.Div([left, right], style={"display": "flex", "gap": "14px", "marginBottom": "14px"})
 
 
@@ -262,13 +274,17 @@ def booking_chart(asset, closes):
     for i, r in enumerate(closes, 1):
         ts = r.get("timestamp", "")
         t = ts[11:16] if len(ts) >= 16 else f"#{i}"
-        p = float(r.get("effective_pl", 0))
+        gross = float(r.get("effective_pl", 0))
+        tax = float(r.get("charges", 0))
+        p = float(r.get("net_pl", gross - tax))        # actual profit (after tax)
         labels.append(t); profits.append(p)
         colors.append(C["green"] if p >= 0 else C["red"])
         c += p; cum.append(round(c, 2)); peak = max(peak, c); peaks.append(round(peak, 2))
-        hover.append(f"{t}<br>Booked ₹{p:.2f}<br>Cum ₹{c:.2f}<br>Peak ₹{peak:.2f}<br>DD ₹{peak-c:.2f}")
+        hover.append(f"{t}<br>Gross ₹{gross:.2f}<br>Tax ₹{tax:.2f}<br>"
+                     f"<b>Net ₹{p:.2f}</b><br>Cum net ₹{c:.2f}<br>Peak ₹{peak:.2f}<br>DD ₹{peak-c:.2f}")
     fig = make_subplots(rows=2, cols=1, row_heights=[0.5, 0.5], vertical_spacing=0.18,
-                        subplot_titles=[f"{asset} — P/L per booking", "Cumulative & drawdown"])
+                        subplot_titles=[f"{asset} — net P/L per booking (after tax)",
+                                        "Cumulative net & drawdown"])
     if closes:
         fig.add_trace(go.Bar(x=labels, y=profits, marker=dict(color=colors),
                              hovertext=hover, hoverinfo="text", showlegend=False), row=1, col=1)
