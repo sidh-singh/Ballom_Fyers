@@ -38,7 +38,7 @@ from indicator import Indicator
 from strategy import Strategy, Signal
 from fyers_api import FyersAPI
 import scanner
-from state_writer import log_strategy_event
+from state_writer import log_strategy_event, write_signal_state
 
 logger = logging.getLogger("worker")
 
@@ -75,6 +75,8 @@ class SymbolWorker(threading.Thread):
         self._sha_cache = None              # (fetch_monotonic, df, sha, sha_trend) — per bar
         self._sha_ttl = int(SHA_TIMEFRAME) * 60 if str(SHA_TIMEFRAME).isdigit() else 300
         self._resolved_on = None            # IST date the commodity future was last resolved
+        self._last_pair = None              # pair of the open basket (for display)
+        self._pair_cache = None             # (fetch_monotonic, pair) — cached display scan when flat
 
     # ── thread main ─────────────────────────────────────────────────────────
     def run(self) -> None:
@@ -111,12 +113,17 @@ class SymbolWorker(threading.Thread):
         buy_pos, sell_pos, close_threshold, count = self._leg_state_and_threshold()
         rsi_mtf = self._rsi_mtf(count)
 
-        buy_signal, sell_signal, _ = self.strategy.calculate_signal(
+        buy_signal, sell_signal, ad = self.strategy.calculate_signal(
             source_df, sha, sha_trend, buy_pos, sell_pos, self.units,
             close_threshold=close_threshold,
             rsi_value=rsi_mtf.get("TIMEFRAME_M1", 50.0), rsi_mtf=rsi_mtf,
         )
         self._execute(buy_signal, sell_signal)
+        try:
+            write_signal_state(self.symbol,
+                               self._signal_payload(ad, buy_pos, sell_pos, buy_signal, sell_signal))
+        except Exception as e:
+            logger.debug("[%s] signal_state write failed: %s", self.symbol, e)
 
     # ── leg state → strategy inputs (cost-basis P&L) ────────────────────────
     def _leg_state_and_threshold(self):
@@ -166,6 +173,7 @@ class SymbolWorker(threading.Thread):
         if not pair:
             log_strategy_event(self.symbol, side, "SCAN_EMPTY", details="no pair for entry")
             return
+        self._last_pair = pair
         leg_sym = pair["CE_Symbol"] if side == "CE" else pair["PE_Symbol"]
         premium = float(pair.get(f"{side}_Premium", 0) or 0)
         lot = self._lot_size(leg_sym)
@@ -226,6 +234,7 @@ class SymbolWorker(threading.Thread):
                            pl=round(realized, 2), details=f"{leg_sym} booked={round(realized, 2)}")
         self.active = None
         self.pending_close = False
+        self._last_pair = None
 
     def _fill_price(self, leg_sym: str, fallback_ltp: float) -> float:
         """Actual fill price for cost basis: tradebook last trade, else ltp fallback."""
@@ -258,6 +267,56 @@ class SymbolWorker(threading.Thread):
         shat = self.indicator.calculate_sha_v3(df, SHA_TREND_LENGTH, SHA_TREND_MA_TYPE)
         self._sha_cache = (now, df, sha, shat)
         return df, sha, shat
+
+    def _get_display_pair(self):
+        """Best CE/PE pair for the dashboard: the open basket's pair if in a trade,
+        else a cached speculative scan (refreshed per SHA bar to bound API cost)."""
+        if self.active and self._last_pair:
+            return self._last_pair
+        now = monotonic()
+        if self._pair_cache and (now - self._pair_cache[0]) < self._sha_ttl:
+            return self._pair_cache[1]
+        lot_df = self.ctx.commodity_df if self.asset_type == "COMMODITY" else self.ctx.option_df
+        pair = scanner.scan_best_pair(self.cfg, self.ctx.api, self.ctx.meter, lot_df=lot_df)
+        self._pair_cache = (now, pair)
+        return pair
+
+    def _signal_payload(self, ad, buy_pos, sell_pos, buy_signal, sell_signal) -> dict:
+        """Build the per-symbol dashboard payload (signal + SHA + RSI + pair + position)."""
+        if self.active:
+            side = self.active["side"]
+            if buy_signal == Signal.CLOSE_BUY or sell_signal == Signal.CLOSE_SELL:
+                sig = "CLOSE"
+            elif buy_signal == Signal.BUY_MORE or sell_signal == Signal.SELL_MORE:
+                sig = "ADD"
+            else:
+                sig = f"HOLD {side}"
+        elif buy_signal == Signal.BUY:
+            sig = "BUY"
+        elif sell_signal == Signal.SELL:
+            sig = "SELL"
+        else:
+            sig = "DO_NOTHING"
+        legdict = buy_pos or sell_pos
+        pos = None
+        if self.active and legdict:
+            pos = {"side": self.active["side"], "symbol": self.active["symbol"],
+                   "netQty": legdict.get("total_volume"),
+                   "cycle_pl": legdict.get("total_profit"),
+                   "mg": legdict.get("count", 1) - 1}
+        return {
+            "asset_type": self.asset_type,
+            "underlying": self._active_underlying,
+            "signal": sig,
+            "units": self.units,
+            "sha": {"power": ad.get("sha_buy_strength", 0), "list": ad.get("sha_power_list", [])},
+            "sha_trend": {"power": ad.get("sha_trend_buy_strength", 0),
+                          "list": ad.get("sha_trend_power_list", [])},
+            "rsi": ad.get("rsi_mtf", {}),
+            "rsi_blocked": ad.get("rsi_mtf_blocked", False),
+            "pair": self._get_display_pair(),
+            "position": pos,
+        }
 
     def _rsi_mtf(self, count: int) -> dict:
         """Fetch only the RSI timeframes needed this tick (budget-aware + cached)."""

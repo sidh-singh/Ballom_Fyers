@@ -49,6 +49,8 @@ APP_STATUS_FILE     = STATE_DIR / "app_status.json"
 API_USAGE_FILE      = STATE_DIR / "api_usage.json"      # written by api_meter
 OPTION_PAIRS_JSON   = STATE_DIR / "option_pairs.json"
 POSITION_STATE_FILE = STATE_DIR / "position_state.json"
+SIGNAL_STATE_FILE   = STATE_DIR / "signal_state.json"   # per-symbol SHA/RSI/signal/pair
+ACCOUNT_STATE_FILE  = STATE_DIR / "account_state.json"  # balance/equity/margin
 STRATEGY_LOG_DIR    = STATE_DIR / "strategy_log"
 
 SYMBOLS_JSON = Path(__file__).resolve().parent / "symbols.json"

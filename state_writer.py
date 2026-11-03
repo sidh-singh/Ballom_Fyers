@@ -14,13 +14,17 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from constants import (
     STATE_DIR, APP_STATUS_FILE, STRATEGY_LOG_DIR, now_ist,
+    SIGNAL_STATE_FILE, ACCOUNT_STATE_FILE,
 )
+
+_signal_lock = threading.Lock()   # serialise per-symbol signal_state read-merge-write
 
 _MAX_LOG_ENTRIES = 500
 _MAX_LOG_DAYS = 14
@@ -57,6 +61,25 @@ def write_app_status(status: str = "running", message: str = "", **extra) -> Non
     data = {"timestamp": _ts(), "status": status, "message": message}
     data.update(extra)
     _write_json_atomic(APP_STATUS_FILE, data)
+
+
+def write_signal_state(symbol: str, payload: dict) -> None:
+    """Upsert one symbol's SHA/RSI/signal/pair analysis (dashboard reads this)."""
+    with _signal_lock:
+        data = _read_json(SIGNAL_STATE_FILE)
+        if not isinstance(data, dict):
+            data = {}
+        payload = dict(payload)
+        payload["timestamp"] = _ts()
+        data[symbol] = payload
+        _write_json_atomic(SIGNAL_STATE_FILE, data)
+
+
+def write_account_state(payload: dict) -> None:
+    """Balance / equity / margin / unrealized snapshot (dashboard KPI row)."""
+    payload = dict(payload)
+    payload["timestamp"] = _ts()
+    _write_json_atomic(ACCOUNT_STATE_FILE, payload)
 
 
 # ── strategy log (date-partitioned) ─────────────────────────────────────────

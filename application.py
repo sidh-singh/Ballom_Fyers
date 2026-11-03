@@ -28,7 +28,7 @@ from fyers_api import FyersAPI
 from api_meter import meter
 from symbol_worker import SymbolWorker
 from position_tracker import PositionTracker
-from state_writer import write_app_status, log_strategy_event
+from state_writer import write_app_status, log_strategy_event, write_account_state
 
 logging.basicConfig(
     level=logging.INFO,
@@ -151,6 +151,20 @@ def supervise_workers(workers: dict, config: dict, ctx: EngineContext) -> None:
             workers[sym] = nw
 
 
+def _write_account(ctx: EngineContext) -> None:
+    """Snapshot balance/equity/margin/unrealized for the dashboard KPI row."""
+    bal = ctx.api.get_balance()
+    resp = ctx.api.positions()
+    opens = resp.get("netPositions", []) if isinstance(resp, dict) else []
+    unreal = sum(float(p.get("pl", 0) or 0) for p in opens)
+    margin = sum(abs(int(p.get("netQty", 0))) * float(p.get("netAvg", 0) or 0) for p in opens)
+    write_account_state({
+        "balance": round(bal, 2), "unrealized": round(unreal, 2),
+        "equity": round(bal + unreal, 2), "margin_used": round(margin, 2),
+        "open_positions": len(opens),
+    })
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #  MAIN  (Loop 1)
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -233,6 +247,10 @@ def main() -> None:
 
             # supervise workers
             supervise_workers(workers, config, ctx)
+            try:
+                _write_account(ctx)
+            except Exception:
+                pass
 
             if not ctx.brake_event.is_set():
                 write_app_status(

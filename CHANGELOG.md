@@ -7,6 +7,19 @@ Format: `YYYY-MM-DD` — change — _why_.
 
 ---
 
+## 2026-11-03 — Rich dashboard + engine analysis state (ported from fyers_demo)
+
+- Engine now writes **`signal_state.json`** per symbol (signal, best CE/PE pair, SHA
+  signal+trend power/list, multi-timeframe RSI, rsi-block, live position) and
+  **`account_state.json`** (balance/equity/margin/unrealized). Worker caches a per-bar
+  display-scan so the best pair always shows.
+- **Rich `dashboard.py`**: account KPI row, API meter, per-symbol strategy panels (signal
+  badge, CE/PE pair cards, SHA candle squares, RSI TF cells, position), per-asset booking
+  charts (bar + cumulative/drawdown), strategy log. Colours BUY=green/SELL=red/
+  nothing=grey/ADD=amber/CLOSE=purple/HOLD=blue, label-paired. Header shows **LIVE**.
+- Broker-agnostic port from `fyers_demo` (verified there with a live demo run); live keeps
+  the real `FyersAPI`. Symbols unchanged (commodities still disabled pending confirmation).
+
 ## 2026-11-02 — Loop optimization (lighter, no over-processing)
 
 - **SHA cached per bar** (`symbol_worker._get_sha`): the 300-candle fetch + SHA/trend
