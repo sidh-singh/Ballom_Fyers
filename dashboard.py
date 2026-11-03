@@ -33,6 +33,8 @@ from constants import (
     STATE_DIR, API_USAGE_FILE, APP_STATUS_FILE, STRATEGY_LOG_DIR,
     SIGNAL_STATE_FILE, ACCOUNT_STATE_FILE, API_LIMITS,
     RSI_OVERSOLD, RSI_OVERBOUGHT, now_ist,
+    ENTRY_S, BOOK_S, FORCE_CLOSE_S,
+    OPEN_SCORE_WEIGHTS, BOOK_SCORE_WEIGHTS, FORCE_CLOSE_SCORE_WEIGHTS,
 )
 
 PROFIT_HISTORY = STATE_DIR / "profit_history.json"
@@ -170,65 +172,265 @@ def api_panel():
 
 
 # ── per-symbol strategy panel ────────────────────────────────────────────────
+# Timeframes drawn, coarsest→finest (matches the slope-score sections).
 SLOPE_TF_ORDER = ["D1", "H4", "H1", "M15", "M5"]
 
 
-def _slope_arrow(sign):
-    if sign > 0:  return ("▲", C["green"])
-    if sign < 0:  return ("▼", C["red"])
-    return ("·", C["grey"])
+def _score_axis(weights):
+    """Raw-score range of a section = ±(2·Σ|weight|); the meter axis uses this full span."""
+    return max(1.0, 2.0 * sum(abs(w) for w in (weights or {}).values()))
 
 
-def _score_cell(label, val, rng):
-    if val is None:
-        return ""
-    col = C["green"] if val > 0 else (C["red"] if val < 0 else C["grey"])
-    return html.Div([
-        html.Span(label, style={"color": C["dim"], "fontSize": "10px", "marginRight": "4px"}),
-        html.Span(f"{val:+g}", style={"color": col, "fontWeight": "800", "fontSize": "13px"}),
-        html.Span(f"/{rng}", style={"color": C["muted"], "fontSize": "9px"}),
-    ], style={"display": "inline-flex", "alignItems": "baseline", "marginRight": "10px"})
+def _meter(title, note, value, thr, axis, hi, lo, within):
+    """Diverging −axis…+axis threshold meter (open / book / force-close scores).
+    value sits on the track; ±thr are marked; fill + marker are coloured by zone and always
+    paired with the signed number + a labelled chip (never colour-alone). hi/lo = (label,color)
+    for value ≥ +thr / ≤ −thr; within = (label,color) for the neutral band."""
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        v = 0.0
+    t = float(thr)
+    ax = float(axis) or 1.0
+
+    def pos(x):
+        return max(0.0, min(100.0, (x + ax) / (2.0 * ax) * 100.0))
+
+    lo_pct, hi_pct, zero_pct, p = pos(-t), pos(t), pos(0), pos(v)
+    fl, fw = (zero_pct, p - zero_pct) if v >= 0 else (p, zero_pct - p)
+    if v >= t:
+        zlab, zcol = hi
+    elif v <= -t:
+        zlab, zcol = lo
+    else:
+        zlab, zcol = within
+    track = html.Div(style={
+        "position": "relative", "height": "12px", "background": C["bg"],
+        "borderRadius": "6px", "border": f"1px solid {C['border']}"}, children=[
+        html.Div(style={"position": "absolute", "top": "0", "bottom": "0", "left": f"{lo_pct}%",
+                        "width": f"{hi_pct - lo_pct}%", "background": C["grey"], "opacity": "0.18"}),
+        html.Div(style={"position": "absolute", "top": "1px", "bottom": "1px", "left": f"{fl}%",
+                        "width": f"{fw}%", "background": zcol, "borderRadius": "3px", "opacity": "0.9"}),
+        html.Div(style={"position": "absolute", "left": f"{zero_pct}%", "top": "-2px",
+                        "bottom": "-2px", "width": "1px", "background": C["muted"]}),
+        html.Div(style={"position": "absolute", "left": f"{lo_pct}%", "top": "-3px",
+                        "bottom": "-3px", "width": "2px", "background": lo[1]}),
+        html.Div(style={"position": "absolute", "left": f"{hi_pct}%", "top": "-3px",
+                        "bottom": "-3px", "width": "2px", "background": hi[1]}),
+        html.Div(style={"position": "absolute", "left": f"{p}%", "top": "50%",
+                        "transform": "translate(-50%, -50%)", "width": "11px", "height": "11px",
+                        "borderRadius": "50%", "background": zcol,
+                        "border": f"2px solid {C['card']}", "boxShadow": f"0 0 0 1px {zcol}"}),
+    ])
+    return html.Div(style={"padding": "5px 2px 7px"}, children=[
+        html.Div([
+            html.Span(title, style={"fontSize": "10px", "fontWeight": "700", "color": C["dim"],
+                      "letterSpacing": "0.4px"}),
+            html.Span(f"{note} · ±{ax:g}", style={"fontSize": "9px", "color": C["muted"],
+                      "marginLeft": "auto"}),
+        ], style={"display": "flex", "alignItems": "baseline", "marginBottom": "5px"}),
+        html.Div([
+            html.Span(f"{v:+g}", style={"fontWeight": "800", "fontSize": "16px", "color": zcol,
+                      "minWidth": "40px", "textAlign": "right"}),
+            html.Div(track, style={"flex": "1"}),
+            _chip(zlab, zcol),
+        ], style={"display": "flex", "alignItems": "center", "gap": "9px"}),
+    ])
+
+
+def _profit_meter(cycle_pl, target):
+    """₹ progress meter: current cycle P&L toward the booking target (close_threshold).
+    Green once bookable (≥ target), red if underwater, amber while climbing. The target line
+    and the % toward it make the 'how close to booking' read without colour-alone."""
+    try:
+        v = float(cycle_pl)
+    except (TypeError, ValueError):
+        v = 0.0
+    try:
+        t = float(target)
+    except (TypeError, ValueError):
+        t = 0.0
+    hi = max(t * 1.25, v * 1.1, 1.0)
+    lo = min(0.0, v * 1.1)
+    span = (hi - lo) or 1.0
+
+    def pos(x):
+        return max(0.0, min(100.0, (x - lo) / span * 100.0))
+
+    t_pct, zero_pct, p = pos(t), pos(0), pos(v)
+    booked = v >= t and t > 0
+    col = C["green"] if booked else (C["red"] if v < 0 else C["amber"])
+    fl, fw = (zero_pct, p - zero_pct) if v >= 0 else (p, zero_pct - p)
+    pct_to = (v / t * 100.0) if t else 0.0
+    track = html.Div(style={
+        "position": "relative", "height": "12px", "background": C["bg"],
+        "borderRadius": "6px", "border": f"1px solid {C['border']}"}, children=[
+        html.Div(style={"position": "absolute", "top": "1px", "bottom": "1px", "left": f"{fl}%",
+                        "width": f"{fw}%", "background": col, "borderRadius": "3px", "opacity": "0.9"}),
+        html.Div(style={"position": "absolute", "left": f"{zero_pct}%", "top": "-2px",
+                        "bottom": "-2px", "width": "1px", "background": C["muted"]}),
+        html.Div(style={"position": "absolute", "left": f"{t_pct}%", "top": "-3px", "bottom": "-3px",
+                        "width": "2px", "background": C["green"]}),
+        html.Div(style={"position": "absolute", "left": f"{p}%", "top": "50%",
+                        "transform": "translate(-50%, -50%)", "width": "11px", "height": "11px",
+                        "borderRadius": "50%", "background": col,
+                        "border": f"2px solid {C['card']}", "boxShadow": f"0 0 0 1px {col}"}),
+    ])
+    return html.Div(style={"padding": "5px 2px 7px"}, children=[
+        html.Div([
+            html.Span("PROFIT → BOOK", style={"fontSize": "10px", "fontWeight": "700",
+                      "color": C["dim"], "letterSpacing": "0.4px"}),
+            html.Span(f"target ₹{t:,.0f} (₹100×units + tax)", style={"fontSize": "9px",
+                      "color": C["muted"], "marginLeft": "auto"}),
+        ], style={"display": "flex", "alignItems": "baseline", "marginBottom": "5px"}),
+        html.Div([
+            html.Span(f"₹{v:,.0f}", style={"fontWeight": "800", "fontSize": "16px", "color": col,
+                      "minWidth": "56px", "textAlign": "right"}),
+            html.Div(track, style={"flex": "1"}),
+            _chip("BOOKABLE" if booked else f"{max(0, pct_to):.0f}%", col),
+        ], style={"display": "flex", "alignItems": "center", "gap": "9px"}),
+    ])
+
+
+def _fmt_pivot_val(v, clamp):
+    """RSI (clamp set) → 1dp; MACD (clamp None) → signed, adaptive precision (unbounded hist)."""
+    if clamp is not None:
+        return f"{v:.1f}"
+    a = abs(v)
+    if a == 0:
+        return "0"
+    if a < 1:
+        return f"{v:+.5f}"
+    if a < 1000:
+        return f"{v:+.3f}"
+    return f"{v:+.1f}"
+
+
+def _pivot_mini_graph(tf_label, g):
+    """Compact pivot chart for one timeframe/indicator: the recent series line, the latest
+    pivot marker, a dotted pivot→current line coloured by the slope sign (green +ve / red −ve),
+    the current-value diamond, and reference lines (RSI OB/OS bands, or the MACD zero line)."""
+    g = g or {}
+    name = g.get("name", "RSI")
+    try:
+        series = [float(v) for v in (g.get("series") or [])]
+        if not series:
+            raise ValueError("no series")
+        cur_x = len(series) - 1
+        current = float(g.get("current", series[-1]))
+        sign = g.get("sign", 0) or 0
+        bands = [float(b) for b in (g.get("bands") or []) if isinstance(b, (int, float))]
+        clamp = g.get("clamp", [0, 100])
+        lc = C["green"] if sign > 0 else (C["red"] if sign < 0 else C["dim"])
+        fig = go.Figure()
+        for b in bands:
+            fig.add_hline(y=b, line_dash="dot", line_color=C["muted"], line_width=0.8, opacity=0.5)
+        fig.add_trace(go.Scatter(x=list(range(len(series))), y=series, mode="lines",
+                      line=dict(color=C["blue"], width=1.6), hoverinfo="skip", showlegend=False))
+        pba, pv = g.get("pivot_bars_ago"), g.get("pivot_value")
+        if isinstance(pba, int) and pv is not None and 0 <= (cur_x - pba) <= cur_x:
+            piv_x = cur_x - pba
+            fig.add_trace(go.Scatter(x=[piv_x, cur_x], y=[float(pv), current], mode="lines",
+                          line=dict(color=lc, width=1.8, dash="dot"), hoverinfo="skip", showlegend=False))
+            fig.add_trace(go.Scatter(x=[piv_x], y=[float(pv)], mode="markers",
+                          marker=dict(color=lc, size=9, symbol="circle", line=dict(width=1, color=C["bg"])),
+                          hoverinfo="skip", showlegend=False))
+        fig.add_trace(go.Scatter(x=[cur_x], y=[current], mode="markers",
+                      marker=dict(color=C["text"], size=7, symbol="diamond", line=dict(width=1, color=C["bg"])),
+                      hoverinfo="skip", showlegend=False))
+        pts = series + bands + [current]
+        pmin, pmax = min(pts), max(pts)
+        if clamp is not None:
+            lo = max(clamp[0], pmin - 5)
+            hi = min(clamp[1], pmax + 5)
+            if hi <= lo:
+                lo, hi = float(clamp[0]), float(clamp[1])
+            ydtick = 20
+        else:
+            span = pmax - pmin
+            pad = (span * 0.12) if span > 0 else (abs(pmax) * 0.12 or 1.0)
+            lo, hi = pmin - pad, pmax + pad
+            if hi <= lo:
+                lo, hi = pmin - 1.0, pmax + 1.0
+            ydtick = None
+        fig.update_layout(height=104, margin=dict(l=34, r=6, t=3, b=3),
+                          paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                          font=dict(color=C["dim"], size=9), showlegend=False)
+        fig.update_xaxes(visible=False, showgrid=False, range=[0, max(cur_x, 1)])
+        fig.update_yaxes(range=[lo, hi], showgrid=True, gridcolor=C["grid"], gridwidth=0.5,
+                         dtick=ydtick, tickfont=dict(size=8, color=C["muted"]))
+        arrow = "▲" if sign > 0 else ("▼" if sign < 0 else "—")
+        label = f"{tf_label} · {name} {_fmt_pivot_val(current, clamp)} {arrow}"
+        return html.Div([
+            html.Div(label, style={"fontSize": "10px", "color": lc, "fontWeight": "700",
+                     "padding": "2px 0 0 4px"}),
+            dcc.Graph(figure=fig, config={"displayModeBar": False}, style={"height": "104px"}),
+        ])
+    except Exception:
+        return html.Div(f"{tf_label}: no {name}", style={"fontSize": "10px", "color": C["muted"],
+                        "padding": "6px 4px"})
 
 
 def _slope_block(s):
-    """RSI+MACD slope analysis: entry direction, per-section scores, per-TF slope arrows."""
+    """RSI+MACD slope analysis panel: entry chips, score/exit/₹ meters, and per-timeframe
+    RSI + MACD pivot mini-charts (slope from the last OB/OS pivot to the current value)."""
     scores = s.get("scores", {}) or {}
-    slopes = s.get("slopes", {}) or {}
+    pos = s.get("position")
+    variant = (s.get("variant") or "netting").lower()
     ed = (s.get("entry_direction") or "WAIT").upper()
     ed_col = C["green"] if ed == "BUY" else (C["red"] if ed == "SELL" else C["grey"])
     chop = s.get("entry_chop_block")
     cooldown = not s.get("entry_allowed", True)
     header = html.Div([
-        html.Span("entry", style={"color": C["dim"], "fontSize": "11px", "marginRight": "6px"}),
+        html.Span("ENTRY", style={"color": C["dim"], "fontSize": "11px", "fontWeight": "700",
+                  "marginRight": "6px", "letterSpacing": "0.4px"}),
         _chip(ed, ed_col),
-        html.Span(style={"width": "10px", "display": "inline-block"}),
-        _score_cell("open", scores.get("open"), 4),
-        _score_cell("book", scores.get("book"), 2),
-        _score_cell("fc", scores.get("fc"), 20),
-        _chip("CHOP", C["amber"]) if chop else "",
-        html.Span(" ", style={"width": "4px", "display": "inline-block"}) if chop and cooldown else "",
-        _chip("COOLDOWN", C["purple"]) if cooldown else "",
-    ], style={"display": "flex", "alignItems": "center", "flexWrap": "wrap",
-              "gap": "2px", "margin": "4px 0"})
-    cells = [html.Span("RSI·MACD", style={"color": C["muted"], "fontSize": "10px",
-             "marginRight": "6px", "alignSelf": "center"})]
+        html.Span(_chip("CHOP", C["amber"]) if chop else "", style={"marginLeft": "6px"}),
+        html.Span(_chip("COOLDOWN", C["purple"]) if cooldown else "", style={"marginLeft": "6px"}),
+    ], style={"display": "flex", "alignItems": "center", "flexWrap": "wrap", "margin": "2px 0 6px"})
+
+    fc_axis = _score_axis(FORCE_CLOSE_SCORE_WEIGHTS)
+    meters = []
+    if pos:
+        meters.append(_profit_meter(pos.get("cycle_pl"), pos.get("target")))
+        if variant == "netting" and scores.get("book") is not None:
+            meters.append(_meter("BOOK (reversal)", f"books ±{BOOK_S:g} in profit",
+                          scores.get("book"), BOOK_S, _score_axis(BOOK_SCORE_WEIGHTS),
+                          hi=("book SHORT", C["purple"]), lo=("book LONG", C["purple"]),
+                          within=("hold", C["grey"])))
+        meters.append(_meter("FORCE-CLOSE", f"closes ±{FORCE_CLOSE_S:g}", scores.get("fc"),
+                      FORCE_CLOSE_S, fc_axis, hi=("close SHORT", C["amber"]),
+                      lo=("close LONG", C["amber"]), within=("hold", C["grey"])))
+    else:
+        meters.append(_meter("OPEN SCORE", f"opens ±{ENTRY_S:g}", scores.get("open"),
+                      ENTRY_S, _score_axis(OPEN_SCORE_WEIGHTS), hi=("BUY opens", C["green"]),
+                      lo=("SELL opens", C["red"]), within=("WAIT", C["grey"])))
+        meters.append(_meter("FORCE-CLOSE (gate)", "must agree", scores.get("fc"),
+                      FORCE_CLOSE_S, fc_axis, hi=("favours BUY", C["green"]),
+                      lo=("favours SELL", C["red"]), within=("neutral", C["grey"])))
+    return html.Div([header] + meters)
+
+
+def _pivot_grid(s):
+    """Full-width grid of per-timeframe RSI + MACD pivot mini-charts (coarsest→finest)."""
+    rg = s.get("rsi_graphs", {}) or {}
+    mg = s.get("macd_graphs", {}) or {}
+    rows = []
     for tf in SLOPE_TF_ORDER:
-        if tf not in slopes:
+        if tf not in rg and tf not in mg:
             continue
-        ra, rc = _slope_arrow(int(slopes[tf].get("rsi", 0)))
-        ma, mc = _slope_arrow(int(slopes[tf].get("macd", 0)))
-        cells.append(html.Div([
-            html.Div(tf, style={"color": C["muted"], "fontSize": "10px", "textAlign": "center"}),
-            html.Div([
-                html.Span(ra, style={"color": rc, "fontSize": "14px", "fontWeight": "800"}),
-                html.Span(ma, style={"color": mc, "fontSize": "14px", "fontWeight": "800",
-                          "marginLeft": "3px"}),
-            ], style={"textAlign": "center"}),
-        ], style={"padding": "2px 7px", "borderRadius": "7px",
-                  "background": "rgba(255,255,255,0.03)", "border": f"1px solid {C['border']}"}))
-    body = html.Div(cells, style={"display": "flex", "gap": "6px", "flexWrap": "wrap",
-                                  "margin": "4px 0", "alignItems": "center"})
-    return html.Div([header, body])
+        rows.append(html.Div([
+            html.Div(_pivot_mini_graph(tf, rg.get(tf)), style={"flex": "1", "minWidth": "0"}),
+            html.Div(_pivot_mini_graph(tf, mg.get(tf)), style={"flex": "1", "minWidth": "0"}),
+        ], style={"display": "flex", "gap": "8px", "marginBottom": "2px"}))
+    if not rows:
+        return html.Div()
+    return _card([
+        html.Div("RSI + MACD pivot slopes  ·  peak → now, per timeframe",
+                 style={"color": C["dim"], "fontSize": "11px", "margin": "0 0 6px",
+                        "letterSpacing": "0.3px", "fontWeight": "700"}),
+        html.Div(rows),
+    ], pad="10px 12px", extra={"marginTop": "2px"})
 
 
 def _rsi_block(rsi):
@@ -317,7 +519,8 @@ def symbol_panel(symbol, s, closes):
                   "fontWeight": "800", "marginLeft": "10px"}),
     ], style={"padding": "4px 10px 2px"})
     right = _card([booked_line, booking_chart(symbol, closes)], pad="8px", extra={"flex": "1.4"})
-    return html.Div([left, right], style={"display": "flex", "gap": "14px", "marginBottom": "14px"})
+    top = html.Div([left, right], style={"display": "flex", "gap": "14px", "marginBottom": "10px"})
+    return html.Div([top, _pivot_grid(s)], style={"marginBottom": "16px"})
 
 
 # ── per-asset P/L booking chart ──────────────────────────────────────────────
@@ -422,7 +625,7 @@ app.layout = html.Div([
     html.Div(id="api", style={"marginTop": "16px"}),
     html.Div(id="symbols", style={"marginTop": "18px"}),
     html.Div(id="log", style={"marginTop": "16px"}),
-], style={"maxWidth": "1280px", "margin": "0 auto", "padding": "26px",
+], style={"maxWidth": "1400px", "margin": "0 auto", "padding": "26px",
           "fontFamily": "Inter, system-ui, sans-serif", "background": C["bg"], "minHeight": "100vh"})
 
 
