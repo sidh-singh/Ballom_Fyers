@@ -1,3 +1,29 @@
+# CHANGELOG — `fyers_live` / `fyers_demo`
+
+## 2026-11-03 — `fyers_demo` branch: local paper-trading (demo account)
+
+Branch `fyers_demo` (from `fyers_live`). Fyers has no demo account, so OPEN/CLOSE are
+**simulated on local disk** while **all read APIs stay real** — so API throttling and
+the full scan/signal/trade logic are genuinely exercised with no real orders or money.
+
+- Added `demo_broker.py`: `DemoBroker` (disk store at `C:/Ballom_FYR/demo/demo_broker.json`
+  — positions/realized/balance/trades) + `DemoFyersAPI(FyersAPI)` overriding
+  buy/sell/positions/get_position/funds/get_balance/last_fill_price/tradebook (simulated,
+  **real LTP for P&L**); inherits real auth/quotes/optionchain/history (all metered).
+- `application.py` uses `DemoFyersAPI`; dashboard header shows **DEMO**; demo config in
+  `constants.py` (`DEMO_DIR`, `DEMO_START_BALANCE = ₹2,00,000`).
+- Added `demo_cycle.py`: forced one-shot entry → fib-add → close (real data + simulated
+  orders) to validate logic + throttling without waiting for a live signal.
+- **Verified** — unit: DemoBroker math (avg 106, realized 2730), real-LTP P&L (₹1300 on
+  +20). **Live cycle 2026-11-03:** balance ₹2L → units 3, scan CE 24000, entry 195, fib
+  add +390, close; **DATA 9 calls (throttled), ORDER 0 (simulated).**
+
+> To run the demo: `start_app.bat` on this branch runs the full engine with simulated
+> orders; or `python demo_cycle.py` for a one-shot check. `dashboard.py` shows the
+> simulated bookings + the real API-usage meter.
+
+---
+
 # CHANGELOG — `fyers_live`
 
 Running log of every change on this branch (per owner's standing request —

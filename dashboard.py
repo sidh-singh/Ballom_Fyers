@@ -224,7 +224,7 @@ app.layout = html.Div([
     dcc.Interval(id="tick", interval=REFRESH_MS, n_intervals=0),
     html.Div([
         html.H2("fyers_live", style={"color": COLORS["text"], "margin": "0"}),
-        html.Span("LIVE", style={"color": COLORS["neg"], "fontWeight": "700",
+        html.Span("DEMO", style={"color": COLORS["amber"], "fontWeight": "700",
                                  "marginLeft": "12px", "fontSize": "13px"}),
     ], style={"display": "flex", "alignItems": "baseline", "marginBottom": "16px"}),
     html.Div(id="status"),

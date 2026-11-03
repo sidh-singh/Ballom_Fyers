@@ -200,6 +200,13 @@ PRODUCT_TYPE         = "MARGIN" # carry / overnight
 # balance that drives unit tiers. Confirm against your Fyers funds screen.
 BALANCE_SOURCE_TITLES = ["total balance", "available balance"]
 
+# ── Demo / paper-trading (fyers_demo branch) ──
+# Fyers has no demo account, so open/close are simulated on local disk while all
+# read APIs stay real (auth/quotes/optionchain/history) — exercises real throttling.
+DEMO_DIR           = BALLOM_DIR / "demo"
+DEMO_BROKER_FILE   = DEMO_DIR / "demo_broker.json"
+DEMO_START_BALANCE = 200_000   # ₹ simulated starting balance (drives unit tiers)
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #  CHARGES / TAXES  (exact, from dev_trading constants.py)
 # ═══════════════════════════════════════════════════════════════════════════════

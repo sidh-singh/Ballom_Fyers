@@ -25,6 +25,7 @@ from constants import (
 )
 from fyers_auth import FyersAuth
 from fyers_api import FyersAPI
+from demo_broker import DemoFyersAPI          # fyers_demo: simulated open/close, real reads
 from api_meter import meter
 from symbol_worker import SymbolWorker
 from position_tracker import PositionTracker
@@ -162,7 +163,7 @@ def main() -> None:
 
     config = load_config()
     auth = FyersAuth(read_only=False)
-    api = FyersAPI(auth)
+    api = DemoFyersAPI(auth)     # DEMO: real reads + throttling, simulated orders
     tracker = PositionTracker()
     ctx = EngineContext(
         auth=auth, api=api, meter=meter, tracker=tracker,
