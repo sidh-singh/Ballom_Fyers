@@ -7,6 +7,25 @@ Format: `YYYY-MM-DD` — change — _why_.
 
 ---
 
+## 2026-11-03 — Dashboard: RSI+MACD pivot charts + score / exit / ₹ gauges
+
+Rebuilt the per-symbol analysis panel for the RSI+MACD engine (no SHA):
+- **Per-timeframe RSI + MACD-histogram pivot mini-charts** (M5/M15/H1/H4/D1): each plots the
+  recent series, the latest OB/OS pivot marker, and a dotted slope line from that pivot to the
+  current value — green when the slope is +ve, red −ve (the exact signal the score reads).
+- **Diverging threshold meters:** OPEN score (when flat; marks the ±ENTRY_S open thresholds),
+  BOOK score (netting only; ±BOOK_S reversal), and FORCE-CLOSE score (±FORCE_CLOSE_S) when in a
+  position.
+- **₹ PROFIT→BOOK meter:** live cycle P&L vs the close_threshold target (₹100×units + tax) with
+  a % progress / BOOKABLE chip.
+- Variant-aware (hedging hides the book meter), richer colour (every colour paired with the
+  signed value + a labelled chip, never colour-alone), full-width pivot grid, wider layout.
+- **Worker:** `_slopes_and_rsi` now emits `rsi_graphs`/`macd_graphs` + `close_threshold`/position
+  `target` in the signal payload; `constants.RSI_GRAPH_BARS=40`. Symbol discovery stays dynamic
+  (the dashboard renders whatever symbols the workers write to signal_state).
+- Verified: compiles on Python 3.11; panels render (real Plotly figures) for flat / in-profit /
+  underwater / zero-target edge cases on both variants.
+
 ## 2026-11-03 — RSI+MACD NETTING strategy (variant A) + full docs
 
 Ported the Alcadeias RSI+MACD slope strategy (branch `rsimacd_btcusd1_wd_exp_h`) onto
