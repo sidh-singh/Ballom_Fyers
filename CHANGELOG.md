@@ -7,6 +7,13 @@ Format: `YYYY-MM-DD` — change — _why_.
 
 ---
 
+## 2026-11-03 — Fix: commodity fib-DCA ladder never added (RSI used wrong symbol)
+
+- `symbol_worker._rsi_one` fetched `self.underlying` (placeholder `MCX:<ROOT>-FUT`) instead
+  of `self._active_underlying` (resolved future). Invalid symbol → RSI fell back to 50.0 →
+  commodities never hit OS/OB → fibonacci DCA ladder (1→2→3→5→8→13) never added. NIFTY
+  unaffected. Now uses the resolved underlying. (Ported from fyers_demo.)
+
 ## 2026-11-03 — Plan-aware limits/brokerage (Standard/Prime) + dashboard indicator
 
 - API plan is **config-driven** (`symbols.json "api_plan": standard|prime|auto`; `auto`

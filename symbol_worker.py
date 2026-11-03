@@ -344,7 +344,7 @@ class SymbolWorker(threading.Thread):
             res, resample = "60", "6h"
         try:
             df = self.ctx.api.fetch_historical_data(
-                self.underlying, res, RSI_CANDLE_COUNT, market_type=self.asset_type)
+                self._active_underlying, res, RSI_CANDLE_COUNT, market_type=self.asset_type)
             if resample is not None:
                 df = self._resample(df, resample)
             rsi = self.indicator.calculate_rsi(df["Close"], RSI_LENGTH, RSI_MA_TYPE)
