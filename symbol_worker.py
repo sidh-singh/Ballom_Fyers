@@ -31,7 +31,7 @@ from constants import (
     RSI_LENGTH, RSI_MA_TYPE, RSI_CANDLE_COUNT,
     RSI_DCA_LADDER_TIMEFRAMES, TIMEFRAME_TO_FYERS_RES,
     MACD_FAST, MACD_SLOW, MACD_SIGNAL,
-    SLOPE_TIMEFRAMES, PEAK_LOOKBACK, PIVOT_WIDTH, RSI_PEAK_OB, RSI_PEAK_OS,
+    SLOPE_TIMEFRAMES, PEAK_LOOKBACK, PIVOT_WIDTH, RSI_PEAK_OB, RSI_PEAK_OS, RSI_GRAPH_BARS,
     REENTRY_COOLDOWN_SECONDS,
     STEP_UP_BALANCE, UNIT_MAX_LIMIT, HEDGE_PER_UNIT,
     estimate_trade_charges,
@@ -108,7 +108,7 @@ class SymbolWorker(threading.Thread):
                 return
 
         buy_pos, sell_pos, close_threshold, count = self._leg_state_and_threshold()
-        rsi_mtf, slopes = self._slopes_and_rsi()
+        rsi_mtf, slopes, rsi_graphs, macd_graphs = self._slopes_and_rsi()
         source_df = self._tf_frame("TIMEFRAME_M5")   # price feed / liveness (strategy metadata)
         if source_df is None or len(source_df) == 0:
             logger.info("[%s] insufficient index candles", self.symbol)
@@ -121,6 +121,9 @@ class SymbolWorker(threading.Thread):
             rsi_value=rsi_mtf.get("TIMEFRAME_M1", 50.0), rsi_mtf=rsi_mtf,
             slopes=slopes, entry_allowed=entry_allowed,
         )
+        ad["rsi_graphs"] = rsi_graphs
+        ad["macd_graphs"] = macd_graphs
+        ad["close_threshold"] = close_threshold
         self._execute(buy_signal, sell_signal)
         try:
             write_signal_state(self.symbol,
@@ -279,15 +282,15 @@ class SymbolWorker(threading.Thread):
         return df
 
     def _slopes_and_rsi(self):
-        """Per-TF RSI (ladder tiers) + RSI/MACD-histogram latest-pivot slopes (SLOPE_TIMEFRAMES).
-        One fetch per timeframe (cached per bar), reused for both — mirrors Alcadeias app.py.
-        The MACD pivot side is chosen by the signal line (signal>0→'high', <0→'low'). Returns
-        (rsi_mtf: {TIMEFRAME_x: value}, slopes: {short_tf: {'rsi':…, 'macd':…}})."""
+        """Per-TF RSI (ladder tiers) + RSI/MACD-histogram latest-pivot slopes + the dashboard
+        mini-chart series (SLOPE_TIMEFRAMES). One fetch per timeframe (cached per bar), reused
+        for all three — mirrors Alcadeias app.py. The MACD pivot side is chosen by the signal
+        line (signal>0→'high', <0→'low'). Returns (rsi_mtf, slopes, rsi_graphs, macd_graphs)."""
         needed = []
         for tf in (["TIMEFRAME_M1"] + list(RSI_DCA_LADDER_TIMEFRAMES) + list(SLOPE_TIMEFRAMES)):
             if tf not in needed:
                 needed.append(tf)
-        rsi_mtf, slopes = {}, {}
+        rsi_mtf, slopes, rsi_graphs, macd_graphs = {}, {}, {}, {}
         for tf in needed:
             df = self._tf_frame(tf)
             if df is None or len(df) == 0:
@@ -304,8 +307,27 @@ class SymbolWorker(threading.Thread):
                 macd_side = "high" if sig > 0 else ("low" if sig < 0 else None)
                 macd_slope = self.indicator.latest_pivot_slope(
                     macd_df["hist"], lookback=PEAK_LOOKBACK, width=PIVOT_WIDTH, side=macd_side)
-                slopes[tf.replace("TIMEFRAME_", "")] = {"rsi": rsi_slope, "macd": macd_slope}
-        return rsi_mtf, slopes
+                key = tf.replace("TIMEFRAME_", "")
+                slopes[key] = {"rsi": rsi_slope, "macd": macd_slope}
+                hist = macd_df["hist"]
+                # Dashboard pivot mini-charts: recent series + latest pivot + slope sign.
+                rsi_graphs[key] = {
+                    "series": [round(float(v), 2) for v in rsi_s.tail(RSI_GRAPH_BARS).tolist()],
+                    "current": round(float(rsi_s.iloc[-1]), 2),
+                    "pivot_bars_ago": rsi_slope.get("bars_ago"),
+                    "pivot_value": (round(rsi_slope["value"], 2) if rsi_slope.get("value") is not None else None),
+                    "sign": rsi_slope.get("sign", 0),
+                    "bands": [RSI_PEAK_OS, RSI_PEAK_OB], "clamp": [0, 100], "name": "RSI",
+                }
+                macd_graphs[key] = {
+                    "series": [round(float(v), 5) for v in hist.tail(RSI_GRAPH_BARS).tolist()],
+                    "current": round(float(hist.iloc[-1]), 5),
+                    "pivot_bars_ago": macd_slope.get("bars_ago"),
+                    "pivot_value": (round(macd_slope["value"], 5) if macd_slope.get("value") is not None else None),
+                    "sign": macd_slope.get("sign", 0),
+                    "bands": [0], "clamp": None, "name": "MACD",
+                }
+        return rsi_mtf, slopes, rsi_graphs, macd_graphs
 
     def _get_display_pair(self):
         """Best CE/PE pair for the dashboard: the open basket's pair if in a trade,
@@ -342,6 +364,7 @@ class SymbolWorker(threading.Thread):
             pos = {"side": self.active["side"], "symbol": self.active["symbol"],
                    "netQty": legdict.get("total_volume"),
                    "cycle_pl": legdict.get("total_profit"),
+                   "target": ad.get("close_threshold"),
                    "mg": legdict.get("count", 1) - 1}
         slopes_raw = ad.get("slopes", {}) or {}
         slope_signs = {
@@ -365,6 +388,9 @@ class SymbolWorker(threading.Thread):
             "exit_reason": ad.get("exit_reason"),
             "variant": ad.get("variant", "netting"),
             "rsi": ad.get("rsi_mtf", {}),
+            "rsi_graphs": ad.get("rsi_graphs", {}),
+            "macd_graphs": ad.get("macd_graphs", {}),
+            "close_threshold": ad.get("close_threshold"),
             "pair": self._get_display_pair(),
             "position": pos,
         }
