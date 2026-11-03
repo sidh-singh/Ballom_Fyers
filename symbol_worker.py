@@ -77,6 +77,7 @@ class SymbolWorker(threading.Thread):
         self._resolved_on = None            # IST date the commodity future was last resolved
         self._last_pair = None              # pair of the open basket (for display)
         self._pair_cache = None             # (fetch_monotonic, pair) — cached display scan when flat
+        self._entry_mono = None             # monotonic at first entry (basket age for the dashboard)
 
     # ── thread main ─────────────────────────────────────────────────────────
     def run(self) -> None:
@@ -118,6 +119,7 @@ class SymbolWorker(threading.Thread):
             close_threshold=close_threshold,
             rsi_value=rsi_mtf.get("TIMEFRAME_M1", 50.0), rsi_mtf=rsi_mtf,
         )
+        ad["close_threshold"] = close_threshold
         self._execute(buy_signal, sell_signal)
         try:
             write_signal_state(self.symbol,
@@ -186,6 +188,7 @@ class SymbolWorker(threading.Thread):
         fill = self._fill_price(leg_sym, premium)
         self.ctx.tracker.record_entry(leg_sym, qty, fill, side=1 if side == "CE" else -1)
         self.active = {"side": side, "symbol": leg_sym}
+        self._entry_mono = monotonic()
         log_strategy_event(self.symbol, side, "ENTRY", qty=qty,
                            details=f"{leg_sym} units={self.units} fill~{fill}")
 
@@ -239,6 +242,7 @@ class SymbolWorker(threading.Thread):
         self.active = None
         self.pending_close = False
         self._last_pair = None
+        self._entry_mono = None
 
     def _fill_price(self, leg_sym: str, fallback_ltp: float) -> float:
         """Actual fill price for cost basis: tradebook last trade, else ltp fallback."""
@@ -303,11 +307,26 @@ class SymbolWorker(threading.Thread):
             sig = "DO_NOTHING"
         legdict = buy_pos or sell_pos
         pos = None
+        ladder = None
+        max_positions = len(RSI_DCA_LADDER_TIMEFRAMES) + 1   # 1 entry + 5 RSI adds
         if self.active and legdict:
-            pos = {"side": self.active["side"], "symbol": self.active["symbol"],
+            count = legdict.get("count", 1)
+            side = self.active["side"]
+            age = int(monotonic() - self._entry_mono) if self._entry_mono is not None else None
+            pos = {"side": side, "symbol": self.active["symbol"],
                    "netQty": legdict.get("total_volume"),
                    "cycle_pl": legdict.get("total_profit"),
-                   "mg": legdict.get("count", 1) - 1}
+                   "target": ad.get("close_threshold"),
+                   "mg": count - 1, "count": count,
+                   "max_positions": max_positions, "age_s": age}
+            # Next ladder step: tier `count` -> its RSI timeframe (count 1->M1 … 5->H4);
+            # count 6 -> H6 final forced close (no further add).
+            if count <= len(RSI_DCA_LADDER_TIMEFRAMES):
+                next_tf, is_final = RSI_DCA_LADDER_TIMEFRAMES[count - 1], False
+            else:
+                next_tf, is_final = RSI_FINAL_CLOSE_TIMEFRAME, True
+            ladder = {"count": count, "next_tf": next_tf, "side": side,
+                      "is_final": is_final, "max_positions": max_positions}
         return {
             "asset_type": self.asset_type,
             "underlying": self._active_underlying,
@@ -318,18 +337,22 @@ class SymbolWorker(threading.Thread):
                           "list": ad.get("sha_trend_power_list", [])},
             "rsi": ad.get("rsi_mtf", {}),
             "rsi_blocked": ad.get("rsi_mtf_blocked", False),
+            "ladder": ladder,
+            "close_threshold": ad.get("close_threshold"),
             "pair": self._get_display_pair(),
             "position": pos,
         }
 
-    def _rsi_mtf(self, count: int) -> dict:
-        """Fetch only the RSI timeframes needed this tick (budget-aware + cached)."""
-        if self.active is None:
-            needed = list(RSI_MTF_TIMEFRAMES)
-        elif count <= len(RSI_DCA_LADDER_TIMEFRAMES):
-            needed = [RSI_DCA_LADDER_TIMEFRAMES[count - 1]]
-        else:
-            needed = [RSI_FINAL_CLOSE_TIMEFRAME]
+    def _rsi_mtf(self, count: int = 0) -> dict:
+        """Fetch the full multi-timeframe RSI set — entry filter (M1/M5/M15/M30) + the DCA
+        ladder tiers (M1/M5/M15/H1/H4) + the H6 final-close — so the dashboard can show RSI for
+        every ladder timeframe. Each TF is cached per bar (TTL = bar duration), so always asking
+        for all of them stays within the DATA budget (M1 ~1/min, H4 ~1/4h, H6 ~1/6h, …)."""
+        needed = []
+        for tf in (list(RSI_MTF_TIMEFRAMES) + list(RSI_DCA_LADDER_TIMEFRAMES)
+                   + [RSI_FINAL_CLOSE_TIMEFRAME]):
+            if tf not in needed:
+                needed.append(tf)
         return {tf: self._rsi_one(tf) for tf in needed}
 
     def _rsi_one(self, tf: str) -> float:
