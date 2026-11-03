@@ -1,17 +1,19 @@
 """
 symbol_worker.py — one trading thread per symbol (Loop-2). ARCHITECTURE §5.
 
-HAM strategy on Fyers NETTING (buy-only), per TRADING_LOGIC.md:
-  • SHA signal + trend and multi-timeframe RSI computed on the INDEX.
+RSI+MACD slope strategy on Fyers NETTING (buy-only), per TRADING_LOGIC.md:
+  • Per-section weighted slope scores (open / book / force-close) built from RSI +
+    MACD-histogram latest-pivot slopes across M5/M15/H1/H4/D1, computed on the INDEX.
   • BUY→CE leg, SELL→PE leg; BUY_MORE/SELL_MORE add+average; CLOSE sells.
   • Per-cycle P&L via SELF-TRACKED cost basis (carry-safe):
         cycle_pl = ltp*net_qty - cost_basis   (PositionTracker)
-  • Balance-tiered units; adds = fib×units×lot; close at 100×units + charges.
+  • Balance-tiered units; adds = fib×units×lot. Profit exit is branch-specific:
+    NETTING books on a BOOK-score reversal above the ₹100×units+charges floor.
 
 Live-hardening in this version:
   • accurate cost basis from fill prices (tradebook, fallback ltp),
-  • H6 RSI resampled from 60-min (360 isn't a native Fyers resolution),
-  • per-bar RSI caching (TTL = bar duration) to respect the DATA budget,
+  • per-bar RSI/slope frame caching (TTL = bar duration) to respect the DATA budget,
+  • post-close re-entry cooldown (REENTRY_COOLDOWN_SECONDS),
   • carried-position adoption seeds cost basis from the broker avg.
 
 ⚠️ Places REAL orders when run live. Fill-price sourcing is the main thing to
@@ -26,11 +28,11 @@ from time import monotonic
 
 from constants import (
     MARKET_HOURS, WORKER_IDLE_SLEEP, now_ist,
-    SHA_TIMEFRAME, SHA_CANDLE_COUNT, SHA_LENGTH, SHA_MA_TYPE,
-    SHA_TREND_LENGTH, SHA_TREND_MA_TYPE,
     RSI_LENGTH, RSI_MA_TYPE, RSI_CANDLE_COUNT,
-    RSI_MTF_TIMEFRAMES, RSI_DCA_LADDER_TIMEFRAMES, RSI_FINAL_CLOSE_TIMEFRAME,
-    TIMEFRAME_TO_FYERS_RES,
+    RSI_DCA_LADDER_TIMEFRAMES, TIMEFRAME_TO_FYERS_RES,
+    MACD_FAST, MACD_SLOW, MACD_SIGNAL,
+    SLOPE_TIMEFRAMES, PEAK_LOOKBACK, PIVOT_WIDTH, RSI_PEAK_OB, RSI_PEAK_OS,
+    REENTRY_COOLDOWN_SECONDS,
     STEP_UP_BALANCE, UNIT_MAX_LIMIT, HEDGE_PER_UNIT,
     estimate_trade_charges,
 )
@@ -44,11 +46,11 @@ logger = logging.getLogger("worker")
 
 FIB = [1, 2, 3, 5, 8, 13, 21, 34, 55, 89]       # contracts-per-unit ladder
 
-# RSI cache TTL per timeframe = how long until a new bar forms (seconds)
+# Frame cache TTL per timeframe = how long until a new bar forms (seconds)
 _RES_SECONDS = {
     "TIMEFRAME_M1": 60, "TIMEFRAME_M5": 300, "TIMEFRAME_M15": 900,
     "TIMEFRAME_M30": 1800, "TIMEFRAME_H1": 3600, "TIMEFRAME_H4": 14400,
-    "TIMEFRAME_H6": 21600,
+    "TIMEFRAME_H6": 21600, "TIMEFRAME_D1": 86400,
 }
 
 
@@ -71,9 +73,9 @@ class SymbolWorker(threading.Thread):
         self.units = 1
         self.active: dict | None = None     # {"side": "CE"|"PE", "symbol": leg_sym}
         self.pending_close = False
-        self._rsi_cache: dict = {}          # tf -> (monotonic_fetch_time, value)
-        self._sha_cache = None              # (fetch_monotonic, df, sha, sha_trend) — per bar
-        self._sha_ttl = int(SHA_TIMEFRAME) * 60 if str(SHA_TIMEFRAME).isdigit() else 300
+        self._frame_cache: dict = {}        # tf -> (monotonic_fetch_time, ohlc_df) — per bar
+        self._last_close_time = 0.0         # monotonic of last close → post-close re-entry cooldown
+        self._pair_ttl = 300                # display-scan cache TTL (s)
         self._resolved_on = None            # IST date the commodity future was last resolved
         self._last_pair = None              # pair of the open basket (for display)
         self._pair_cache = None             # (fetch_monotonic, pair) — cached display scan when flat
@@ -105,18 +107,19 @@ class SymbolWorker(threading.Thread):
             if self.active:
                 return
 
-        source_df, sha, sha_trend = self._get_sha()      # cached per SHA bar
-        if source_df is None:
+        buy_pos, sell_pos, close_threshold, count = self._leg_state_and_threshold()
+        rsi_mtf, slopes = self._slopes_and_rsi()
+        source_df = self._tf_frame("TIMEFRAME_M5")   # price feed / liveness (strategy metadata)
+        if source_df is None or len(source_df) == 0:
             logger.info("[%s] insufficient index candles", self.symbol)
             return
 
-        buy_pos, sell_pos, close_threshold, count = self._leg_state_and_threshold()
-        rsi_mtf = self._rsi_mtf(count)
-
+        entry_allowed = (monotonic() - self._last_close_time) >= REENTRY_COOLDOWN_SECONDS
         buy_signal, sell_signal, ad = self.strategy.calculate_signal(
-            source_df, sha, sha_trend, buy_pos, sell_pos, self.units,
+            source_df, buy_pos, sell_pos, self.units,
             close_threshold=close_threshold,
             rsi_value=rsi_mtf.get("TIMEFRAME_M1", 50.0), rsi_mtf=rsi_mtf,
+            slopes=slopes, entry_allowed=entry_allowed,
         )
         self._execute(buy_signal, sell_signal)
         try:
@@ -239,6 +242,7 @@ class SymbolWorker(threading.Thread):
         self.active = None
         self.pending_close = False
         self._last_pair = None
+        self._last_close_time = monotonic()   # start the post-close re-entry cooldown
 
     def _fill_price(self, leg_sym: str, fallback_ltp: float) -> float:
         """Actual fill price for cost basis: tradebook last trade, else ltp fallback."""
@@ -248,37 +252,68 @@ class SymbolWorker(threading.Thread):
         return float(fallback_ltp or 0.0)
 
     # ── data helpers ────────────────────────────────────────────────────────
-    def _index_candles(self):
-        try:
-            return self.ctx.api.fetch_historical_data(
-                self._active_underlying, SHA_TIMEFRAME, SHA_CANDLE_COUNT, market_type=self.asset_type)
-        except Exception as e:
-            logger.warning("[%s] index candle fetch failed: %s", self.symbol, e)
-            return None
-
-    def _get_sha(self):
-        """SHA source candles + computed signal/trend SHA, cached per SHA bar.
-        SHA is a 5-min indicator, so refetching 300 candles + recomputing every 60s
-        tick is wasted work — this refreshes at most once per bar."""
+    def _tf_frame(self, tf: str):
+        """Cached per-bar OHLC frame for one timeframe (reused for RSI + MACD slopes).
+        Refetching 500 candles every 60s tick is wasted work — this refreshes at most
+        once per bar (TTL = bar duration), so the DATA budget is respected while every
+        slope TF stays current. H6 (360) isn't a native Fyers resolution → resample from
+        60-min; D1 maps to Fyers 'D'."""
         now = monotonic()
-        if self._sha_cache and (now - self._sha_cache[0]) < self._sha_ttl:
-            _, df, sha, shat = self._sha_cache
-            return df, sha, shat
-        df = self._index_candles()
-        if df is None or len(df) < max(SHA_TREND_LENGTH * 3, 60):
-            return None, None, None
-        sha = self.indicator.calculate_sha_v3(df, SHA_LENGTH, SHA_MA_TYPE)
-        shat = self.indicator.calculate_sha_v3(df, SHA_TREND_LENGTH, SHA_TREND_MA_TYPE)
-        self._sha_cache = (now, df, sha, shat)
-        return df, sha, shat
+        cached = self._frame_cache.get(tf)
+        ttl = _RES_SECONDS.get(tf, 300)
+        if cached and (now - cached[0]) < ttl:
+            return cached[1]
+        res = TIMEFRAME_TO_FYERS_RES.get(tf, "5")
+        resample = None
+        if res == "360":                             # H6 → resample from 60-min
+            res, resample = "60", "6h"
+        try:
+            df = self.ctx.api.fetch_historical_data(
+                self._active_underlying, res, RSI_CANDLE_COUNT, market_type=self.asset_type)
+            if resample is not None:
+                df = self._resample(df, resample)
+        except Exception as e:
+            logger.warning("[%s] %s frame fetch failed: %s", self.symbol, tf, e)
+            df = cached[1] if cached else None
+        self._frame_cache[tf] = (now, df)
+        return df
+
+    def _slopes_and_rsi(self):
+        """Per-TF RSI (ladder tiers) + RSI/MACD-histogram latest-pivot slopes (SLOPE_TIMEFRAMES).
+        One fetch per timeframe (cached per bar), reused for both — mirrors Alcadeias app.py.
+        The MACD pivot side is chosen by the signal line (signal>0→'high', <0→'low'). Returns
+        (rsi_mtf: {TIMEFRAME_x: value}, slopes: {short_tf: {'rsi':…, 'macd':…}})."""
+        needed = []
+        for tf in (["TIMEFRAME_M1"] + list(RSI_DCA_LADDER_TIMEFRAMES) + list(SLOPE_TIMEFRAMES)):
+            if tf not in needed:
+                needed.append(tf)
+        rsi_mtf, slopes = {}, {}
+        for tf in needed:
+            df = self._tf_frame(tf)
+            if df is None or len(df) == 0:
+                rsi_mtf[tf] = 50.0
+                continue
+            rsi_s = self.indicator.calculate_rsi(df["Close"], RSI_LENGTH, RSI_MA_TYPE)
+            rsi_mtf[tf] = float(rsi_s.iloc[-1]) if len(rsi_s) else 50.0
+            if tf in SLOPE_TIMEFRAMES:
+                macd_df = self.indicator.calculate_macd(df["Close"], MACD_FAST, MACD_SLOW, MACD_SIGNAL)
+                rsi_slope = self.indicator.latest_pivot_slope(
+                    rsi_s, lookback=PEAK_LOOKBACK, width=PIVOT_WIDTH,
+                    ob_level=RSI_PEAK_OB, os_level=RSI_PEAK_OS)
+                sig = float(macd_df["signal"].iloc[-1]) if len(macd_df) else 0.0
+                macd_side = "high" if sig > 0 else ("low" if sig < 0 else None)
+                macd_slope = self.indicator.latest_pivot_slope(
+                    macd_df["hist"], lookback=PEAK_LOOKBACK, width=PIVOT_WIDTH, side=macd_side)
+                slopes[tf.replace("TIMEFRAME_", "")] = {"rsi": rsi_slope, "macd": macd_slope}
+        return rsi_mtf, slopes
 
     def _get_display_pair(self):
         """Best CE/PE pair for the dashboard: the open basket's pair if in a trade,
-        else a cached speculative scan (refreshed per SHA bar to bound API cost)."""
+        else a cached speculative scan (refreshed per _pair_ttl to bound API cost)."""
         if self.active and self._last_pair:
             return self._last_pair
         now = monotonic()
-        if self._pair_cache and (now - self._pair_cache[0]) < self._sha_ttl:
+        if self._pair_cache and (now - self._pair_cache[0]) < self._pair_ttl:
             return self._pair_cache[1]
         lot_df = self.ctx.commodity_df if self.asset_type == "COMMODITY" else self.ctx.option_df
         pair = scanner.scan_best_pair(self.cfg, self.ctx.api, self.ctx.meter, lot_df=lot_df)
@@ -286,7 +321,7 @@ class SymbolWorker(threading.Thread):
         return pair
 
     def _signal_payload(self, ad, buy_pos, sell_pos, buy_signal, sell_signal) -> dict:
-        """Build the per-symbol dashboard payload (signal + SHA + RSI + pair + position)."""
+        """Build the per-symbol dashboard payload (signal + slope scores + RSI + pair + position)."""
         if self.active:
             side = self.active["side"]
             if buy_signal == Signal.CLOSE_BUY or sell_signal == Signal.CLOSE_SELL:
@@ -308,51 +343,31 @@ class SymbolWorker(threading.Thread):
                    "netQty": legdict.get("total_volume"),
                    "cycle_pl": legdict.get("total_profit"),
                    "mg": legdict.get("count", 1) - 1}
+        slopes_raw = ad.get("slopes", {}) or {}
+        slope_signs = {
+            tf: {"rsi": (v.get("rsi") or {}).get("sign", 0),
+                 "macd": (v.get("macd") or {}).get("sign", 0)}
+            for tf, v in slopes_raw.items()
+        }
         return {
             "asset_type": self.asset_type,
             "underlying": self._active_underlying,
             "signal": sig,
             "units": self.units,
-            "sha": {"power": ad.get("sha_buy_strength", 0), "list": ad.get("sha_power_list", [])},
-            "sha_trend": {"power": ad.get("sha_trend_buy_strength", 0),
-                          "list": ad.get("sha_trend_power_list", [])},
+            "scores": {"open": ad.get("open_score", 0),
+                       "book": ad.get("book_score"),
+                       "fc": ad.get("fc_score", 0)},
+            "entry_direction": ad.get("entry_direction", "WAIT"),
+            "slope_direction": ad.get("slope_direction", "WAIT"),
+            "slopes": slope_signs,
+            "entry_allowed": ad.get("entry_allowed", True),
+            "entry_chop_block": ad.get("entry_chop_block", False),
+            "exit_reason": ad.get("exit_reason"),
+            "variant": ad.get("variant", "netting"),
             "rsi": ad.get("rsi_mtf", {}),
-            "rsi_blocked": ad.get("rsi_mtf_blocked", False),
             "pair": self._get_display_pair(),
             "position": pos,
         }
-
-    def _rsi_mtf(self, count: int) -> dict:
-        """Fetch only the RSI timeframes needed this tick (budget-aware + cached)."""
-        if self.active is None:
-            needed = list(RSI_MTF_TIMEFRAMES)
-        elif count <= len(RSI_DCA_LADDER_TIMEFRAMES):
-            needed = [RSI_DCA_LADDER_TIMEFRAMES[count - 1]]
-        else:
-            needed = [RSI_FINAL_CLOSE_TIMEFRAME]
-        return {tf: self._rsi_one(tf) for tf in needed}
-
-    def _rsi_one(self, tf: str) -> float:
-        now = monotonic()
-        cached = self._rsi_cache.get(tf)
-        ttl = _RES_SECONDS.get(tf, 300)
-        if cached and (now - cached[0]) < ttl:      # per-bar cache → skip the fetch
-            return cached[1]
-        res = TIMEFRAME_TO_FYERS_RES.get(tf, "5")
-        resample = None
-        if res == "360":                             # H6 → resample from 60-min
-            res, resample = "60", "6h"
-        try:
-            df = self.ctx.api.fetch_historical_data(
-                self._active_underlying, res, RSI_CANDLE_COUNT, market_type=self.asset_type)
-            if resample is not None:
-                df = self._resample(df, resample)
-            rsi = self.indicator.calculate_rsi(df["Close"], RSI_LENGTH, RSI_MA_TYPE)
-            val = float(rsi.iloc[-1]) if len(rsi) else 50.0
-        except Exception:
-            val = cached[1] if cached else 50.0
-        self._rsi_cache[tf] = (now, val)
-        return val
 
     @staticmethod
     def _resample(df, rule: str):

@@ -5,8 +5,8 @@ Separate process. Reads the JSON state files the engine writes under
 C:/Ballom_FYR/state/ and renders:
   • account KPIs      (account_state.json + profit_history.json)
   • API-usage meter   (api_usage.json)
-  • per-symbol panel  (signal_state.json): signal, best CE/PE pair, SHA candles,
-    multi-timeframe RSI, live position
+  • per-symbol panel  (signal_state.json): signal, best CE/PE pair, RSI+MACD slope
+    scores (open/book/fc) + per-TF slope arrows, multi-timeframe RSI, live position
   • P/L booking chart (profit_history.json): bar-per-close + cumulative/drawdown
   • strategy log      (strategy_log/<date>.json)
 
@@ -170,21 +170,65 @@ def api_panel():
 
 
 # ── per-symbol strategy panel ────────────────────────────────────────────────
-def _sha_block(label, sha):
-    lst = sha.get("list", []) or []
-    power = sha.get("power", 0)
-    sq = [html.Span(style={"display": "inline-block", "width": "15px", "height": "15px",
-                           "borderRadius": "4px", "marginRight": "3px",
-                           "background": C["green"] if v == 1 else C["red"],
-                           "opacity": "0.9"}) for v in lst[:10]]
+SLOPE_TF_ORDER = ["D1", "H4", "H1", "M15", "M5"]
+
+
+def _slope_arrow(sign):
+    if sign > 0:  return ("▲", C["green"])
+    if sign < 0:  return ("▼", C["red"])
+    return ("·", C["grey"])
+
+
+def _score_cell(label, val, rng):
+    if val is None:
+        return ""
+    col = C["green"] if val > 0 else (C["red"] if val < 0 else C["grey"])
     return html.Div([
-        html.Span(label, style={"color": C["dim"], "fontSize": "11px", "width": "78px",
-                                "display": "inline-block"}),
-        html.Span(f"{power}/{len(lst) or '-'}", style={
-            "color": C["green"] if power * 2 >= (len(lst) or 1) else C["red"],
-            "fontWeight": "700", "fontSize": "12px", "marginRight": "10px"}),
-        html.Span(sq),
-    ], style={"margin": "3px 0"})
+        html.Span(label, style={"color": C["dim"], "fontSize": "10px", "marginRight": "4px"}),
+        html.Span(f"{val:+g}", style={"color": col, "fontWeight": "800", "fontSize": "13px"}),
+        html.Span(f"/{rng}", style={"color": C["muted"], "fontSize": "9px"}),
+    ], style={"display": "inline-flex", "alignItems": "baseline", "marginRight": "10px"})
+
+
+def _slope_block(s):
+    """RSI+MACD slope analysis: entry direction, per-section scores, per-TF slope arrows."""
+    scores = s.get("scores", {}) or {}
+    slopes = s.get("slopes", {}) or {}
+    ed = (s.get("entry_direction") or "WAIT").upper()
+    ed_col = C["green"] if ed == "BUY" else (C["red"] if ed == "SELL" else C["grey"])
+    chop = s.get("entry_chop_block")
+    cooldown = not s.get("entry_allowed", True)
+    header = html.Div([
+        html.Span("entry", style={"color": C["dim"], "fontSize": "11px", "marginRight": "6px"}),
+        _chip(ed, ed_col),
+        html.Span(style={"width": "10px", "display": "inline-block"}),
+        _score_cell("open", scores.get("open"), 4),
+        _score_cell("book", scores.get("book"), 2),
+        _score_cell("fc", scores.get("fc"), 20),
+        _chip("CHOP", C["amber"]) if chop else "",
+        html.Span(" ", style={"width": "4px", "display": "inline-block"}) if chop and cooldown else "",
+        _chip("COOLDOWN", C["purple"]) if cooldown else "",
+    ], style={"display": "flex", "alignItems": "center", "flexWrap": "wrap",
+              "gap": "2px", "margin": "4px 0"})
+    cells = [html.Span("RSI·MACD", style={"color": C["muted"], "fontSize": "10px",
+             "marginRight": "6px", "alignSelf": "center"})]
+    for tf in SLOPE_TF_ORDER:
+        if tf not in slopes:
+            continue
+        ra, rc = _slope_arrow(int(slopes[tf].get("rsi", 0)))
+        ma, mc = _slope_arrow(int(slopes[tf].get("macd", 0)))
+        cells.append(html.Div([
+            html.Div(tf, style={"color": C["muted"], "fontSize": "10px", "textAlign": "center"}),
+            html.Div([
+                html.Span(ra, style={"color": rc, "fontSize": "14px", "fontWeight": "800"}),
+                html.Span(ma, style={"color": mc, "fontSize": "14px", "fontWeight": "800",
+                          "marginLeft": "3px"}),
+            ], style={"textAlign": "center"}),
+        ], style={"padding": "2px 7px", "borderRadius": "7px",
+                  "background": "rgba(255,255,255,0.03)", "border": f"1px solid {C['border']}"}))
+    body = html.Div(cells, style={"display": "flex", "gap": "6px", "flexWrap": "wrap",
+                                  "margin": "4px 0", "alignItems": "center"})
+    return html.Div([header, body])
 
 
 def _rsi_block(rsi):
@@ -244,23 +288,21 @@ def _position_block(pos):
 
 def symbol_panel(symbol, s, closes):
     sig = s.get("signal", "DO_NOTHING")
-    rsi_blocked = s.get("rsi_blocked")
+    variant = (s.get("variant") or "").upper()
     head = html.Div([
         html.Span(symbol, style={"color": C["text"], "fontSize": "18px", "fontWeight": "800"}),
         html.Span(s.get("asset_type", ""), style={"color": C["muted"], "fontSize": "11px",
                   "marginLeft": "8px"}),
         html.Span(_chip(sig, _sig_color(sig)), style={"marginLeft": "12px"}),
+        html.Span(_chip(variant, C["teal"]) if variant else "", style={"marginLeft": "8px"}),
         html.Span(f"units {s.get('units','-')}", style={"color": C["dim"], "fontSize": "12px",
                   "marginLeft": "auto"}),
-        html.Span(_chip("RSI-BLOCK", C["amber"]) if rsi_blocked else "",
-                  style={"marginLeft": "8px"}),
     ], style={"display": "flex", "alignItems": "center", "marginBottom": "10px"})
     left = _card([
         head,
         _pair_block(s.get("pair")),
         html.Div(style={"height": "10px"}),
-        _sha_block("SHA signal", s.get("sha", {})),
-        _sha_block("SHA trend", s.get("sha_trend", {})),
+        _slope_block(s),
         _rsi_block(s.get("rsi", {})),
         _position_block(s.get("position")),
     ], extra={"flex": "1.1"})

@@ -14,10 +14,11 @@ import json
 import logging
 
 from constants import (
-    SYMBOLS_JSON, SHA_TIMEFRAME, SHA_CANDLE_COUNT, SHA_LENGTH, SHA_MA_TYPE,
-    SHA_TREND_LENGTH, SHA_TREND_MA_TYPE, RSI_LENGTH, RSI_MA_TYPE, RSI_CANDLE_COUNT,
-    RSI_MTF_TIMEFRAMES, TIMEFRAME_TO_FYERS_RES, STEP_UP_BALANCE, UNIT_MAX_LIMIT,
-    HEDGE_PER_UNIT, now_ist,
+    SYMBOLS_JSON, RSI_LENGTH, RSI_MA_TYPE, RSI_CANDLE_COUNT,
+    RSI_DCA_LADDER_TIMEFRAMES, TIMEFRAME_TO_FYERS_RES,
+    MACD_FAST, MACD_SLOW, MACD_SIGNAL,
+    SLOPE_TIMEFRAMES, PEAK_LOOKBACK, PIVOT_WIDTH, RSI_PEAK_OB, RSI_PEAK_OS,
+    STEP_UP_BALANCE, UNIT_MAX_LIMIT, HEDGE_PER_UNIT, now_ist,
 )
 from fyers_auth import FyersAuth
 from fyers_api import FyersAPI
@@ -69,29 +70,40 @@ def main() -> None:
         units = max(1, min(int(bal // step) + 1, cap))
         print(f"  units={units}  (step ₹{step:,}, cap {cap})  →  profit target ≈ ₹{hpu * units} + charges")
 
-        try:
-            df = api.fetch_historical_data(underlying, SHA_TIMEFRAME, SHA_CANDLE_COUNT, market_type=atype)
-        except Exception as e:
-            print(f"  candle fetch FAILED: {e}")
-            continue
-        sha = ind.calculate_sha_v3(df, SHA_LENGTH, SHA_MA_TYPE)
-        shat = ind.calculate_sha_v3(df, SHA_TREND_LENGTH, SHA_TREND_MA_TYPE)
-
-        rsi_mtf = {}
-        for tf in RSI_MTF_TIMEFRAMES:
+        # Build per-TF RSI (ladder tiers) + RSI/MACD latest-pivot slopes (mirror the worker).
+        needed, rsi_mtf, slopes, df = [], {}, {}, None
+        for tf in (["TIMEFRAME_M1"] + list(RSI_DCA_LADDER_TIMEFRAMES) + list(SLOPE_TIMEFRAMES)):
+            if tf not in needed:
+                needed.append(tf)
+        for tf in needed:
             try:
                 d = api.fetch_historical_data(underlying, TIMEFRAME_TO_FYERS_RES.get(tf, "5"),
                                               RSI_CANDLE_COUNT, market_type=atype)
-                rsi_mtf[tf] = round(float(ind.calculate_rsi(d["Close"], RSI_LENGTH, RSI_MA_TYPE).iloc[-1]), 1)
             except Exception:
                 rsi_mtf[tf] = 50.0
+                continue
+            if tf == "TIMEFRAME_M5":
+                df = d
+            rsi_s = ind.calculate_rsi(d["Close"], RSI_LENGTH, RSI_MA_TYPE)
+            rsi_mtf[tf] = round(float(rsi_s.iloc[-1]), 1) if len(rsi_s) else 50.0
+            if tf in SLOPE_TIMEFRAMES:
+                macd_df = ind.calculate_macd(d["Close"], MACD_FAST, MACD_SLOW, MACD_SIGNAL)
+                rsl = ind.latest_pivot_slope(rsi_s, lookback=PEAK_LOOKBACK, width=PIVOT_WIDTH,
+                                             ob_level=RSI_PEAK_OB, os_level=RSI_PEAK_OS)
+                sig = float(macd_df["signal"].iloc[-1]) if len(macd_df) else 0.0
+                side = "high" if sig > 0 else ("low" if sig < 0 else None)
+                msl = ind.latest_pivot_slope(macd_df["hist"], lookback=PEAK_LOOKBACK,
+                                             width=PIVOT_WIDTH, side=side)
+                slopes[tf.replace("TIMEFRAME_", "")] = {"rsi": rsl, "macd": msl}
 
         buy, sell, ad = strat.calculate_signal(
-            df, sha, shat, None, None, units, close_threshold=hpu * units,
-            rsi_value=rsi_mtf.get("TIMEFRAME_M1", 50.0), rsi_mtf=rsi_mtf)
-        sl, tl = ad.get("sha_power_list", []), ad.get("sha_trend_power_list", [])
-        print(f"  SHA signal[0]={sl[0] if sl else '?'} trend[0]={tl[0] if tl else '?'}   RSI {rsi_mtf}")
-        print(f"  SIGNAL → buy={buy.name}  sell={sell.name}  (blocked={ad.get('rsi_mtf_blocked')})")
+            df, None, None, units, close_threshold=hpu * units,
+            rsi_value=rsi_mtf.get("TIMEFRAME_M1", 50.0), rsi_mtf=rsi_mtf,
+            slopes=slopes, entry_allowed=True)
+        print(f"  scores → open={ad.get('open_score')} book={ad.get('book_score')} "
+              f"fc={ad.get('fc_score')}   entry_dir={ad.get('entry_direction')}")
+        print(f"  RSI {rsi_mtf}")
+        print(f"  SIGNAL → buy={buy.name}  sell={sell.name}  (chop={ad.get('entry_chop_block')})")
 
         s["_resolved_underlying"] = underlying
         pair = scanner.scan_best_pair(s, api, lot_df=(commodity_df if atype == "COMMODITY" else option_df))
@@ -112,7 +124,7 @@ def main() -> None:
         elif sell == Signal.SELL:
             print(f"  >> WOULD BUY PE {pair['PE_Symbol']} qty {qty}   (NO ORDER PLACED)")
         else:
-            print("  >> no fresh entry this snapshot (flat; SHA/RSI not aligned)")
+            print("  >> no fresh entry this snapshot (flat; slope scores not aligned)")
 
     snap = meter.snapshot()["categories"]
     print("\nAPI calls used this run:", {k: v["day"]["used"] for k, v in snap.items()})
