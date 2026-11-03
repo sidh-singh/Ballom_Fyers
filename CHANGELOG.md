@@ -7,6 +7,16 @@ Format: `YYYY-MM-DD` — change — _why_.
 
 ---
 
+## 2026-11-03 — Plan-aware limits/brokerage (Standard/Prime) + dashboard indicator
+
+- API plan is **config-driven** (`symbols.json "api_plan": standard|prime|auto`; `auto`
+  probes a >50-symbol quote — a Prime-only capability — since Fyers exposes no plan field).
+  Prime raises API limits (`active_api_limits`) + lowers brokerage ₹20→₹15
+  (`brokerage_per_order`); **taxes are statutory and unchanged**. Meter uses the active
+  plan's limits + reports plan; `account_state` carries `api_plan` + `prime_renewal_days`
+  (from a config date — Fyers has no renewal API). Dashboard shows a **STANDARD/PRIME badge
+  + renewal countdown**. (Ported from fyers_demo.)
+
 ## 2026-11-03 — Per-trade tax / gross / net + Fyers-verified rates
 
 - **Tax rates corrected to Fyers charges-list** (2026-11-03): STT 0.0625%→**0.15%** (sell

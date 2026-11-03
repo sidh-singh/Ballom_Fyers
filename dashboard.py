@@ -150,9 +150,21 @@ def api_panel():
                      f"{mn.get('used',0)}/{mn.get('limit','-')}·m",
                      style={"color": C["muted"], "fontSize": "10.5px", "marginTop": "5px"}),
         ], pad="13px 15px", extra={"flex": "1"}))
+    acct = _read(ACCOUNT_STATE_FILE, {}) or {}
+    plan = str(acct.get("api_plan", "standard")).upper()
+    renew = acct.get("prime_renewal_days")
+    plan_col = C["amber"] if plan == "PRIME" else C["grey"]
+    header_bits = [
+        html.Span("API USAGE", style={"color": C["dim"], "fontSize": "12px", "letterSpacing": "0.6px"}),
+        html.Span(_chip(f"{plan} PLAN", plan_col), style={"marginLeft": "10px"}),
+    ]
+    if isinstance(renew, (int, float)):
+        rv = int(renew)
+        txt = f"· renews in {rv}d" if rv >= 0 else f"· EXPIRED {abs(rv)}d ago"
+        header_bits.append(html.Span(txt, style={
+            "color": C["red"] if rv <= 7 else C["dim"], "fontSize": "11px", "marginLeft": "10px"}))
     return html.Div([
-        html.Div("API USAGE — Standard plan", style={"color": C["dim"], "fontSize": "12px",
-                 "margin": "2px 2px 9px", "letterSpacing": "0.6px"}),
+        html.Div(header_bits, style={"margin": "2px 2px 9px", "display": "flex", "alignItems": "center"}),
         html.Div(cards, style={"display": "flex", "gap": "12px"}),
     ])
 

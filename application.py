@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from time import sleep
 
+import constants
 from constants import (
     SYMBOLS_JSON, SUPERVISOR_TICK, DAILY_MAINTENANCE_AT, now_ist, today_ist,
 )
@@ -55,6 +56,7 @@ class EngineContext:
     special_sessions: list = field(default_factory=list)
     option_df: object = None
     commodity_df: object = None
+    prime_renewal: str = ""
 
     def is_trading_day(self, d: date) -> bool:
         """Weekend + NSE-holiday aware (special sessions override)."""
@@ -152,17 +154,56 @@ def supervise_workers(workers: dict, config: dict, ctx: EngineContext) -> None:
 
 
 def _write_account(ctx: EngineContext) -> None:
-    """Snapshot balance/equity/margin/unrealized for the dashboard KPI row."""
+    """Snapshot balance/equity/margin/unrealized (+ API plan & renewal) for the dashboard."""
     bal = ctx.api.get_balance()
     resp = ctx.api.positions()
     opens = resp.get("netPositions", []) if isinstance(resp, dict) else []
     unreal = sum(float(p.get("pl", 0) or 0) for p in opens)
     margin = sum(abs(int(p.get("netQty", 0))) * float(p.get("netAvg", 0) or 0) for p in opens)
+    renewal_days = None
+    if ctx.prime_renewal:
+        try:
+            renewal_days = (date.fromisoformat(ctx.prime_renewal) - today_ist()).days
+        except Exception:
+            renewal_days = None
     write_account_state({
         "balance": round(bal, 2), "unrealized": round(unreal, 2),
         "equity": round(bal + unreal, 2), "margin_used": round(margin, 2),
         "open_positions": len(opens),
+        "api_plan": constants.API_PLAN,
+        "prime_renewal_days": renewal_days,
     })
+
+
+def detect_api_plan(ctx: EngineContext) -> str:
+    """Probe a Prime-only capability: a >50-symbol quotes call succeeds only on Prime.
+    Best-effort — falls back to 'standard' (the safe default) on any doubt."""
+    try:
+        df = ctx.option_df
+        if df is None:
+            return "standard"
+        syms = list(df["Symbol ticker"].dropna().astype(str).head(60))
+        if len(syms) < 55:
+            return "standard"
+        resp = ctx.api.safe_api_call(ctx.api.model.quotes, data={"symbols": ",".join(syms)})
+        if isinstance(resp, dict) and resp.get("s") == "ok" and len(resp.get("d", [])) > 50:
+            return "prime"
+    except Exception as e:
+        logger.warning("API-plan probe failed (assuming standard): %s", e)
+    return "standard"
+
+
+def _resolve_plan(ctx: EngineContext, config: dict) -> None:
+    """Set the API plan from config ('standard'|'prime'|'auto') → limits + brokerage."""
+    plan = str(config.get("api_plan", "standard")).lower()
+    if plan == "auto":
+        plan = detect_api_plan(ctx)
+        logger.info("API plan auto-detected: %s", plan)
+    constants.set_api_plan(plan)
+    ctx.prime_renewal = str(config.get("prime_renewal", "") or "")
+    logger.info("API plan = %s | DATA %s/day | brokerage ₹%s/order",
+                constants.API_PLAN, constants.active_api_limits()["DATA"]["day"],
+                constants.brokerage_per_order())
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -194,6 +235,7 @@ def main() -> None:
         daily_maintenance(ctx, reauth=False, config=config)
     except Exception as e:
         logger.exception("Initial daily_maintenance failed: %s", e)
+    _resolve_plan(ctx, config)
 
     workers: dict[str, SymbolWorker] = {}
     supervise_workers(workers, config, ctx)
