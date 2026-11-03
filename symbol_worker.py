@@ -229,9 +229,13 @@ class SymbolWorker(threading.Thread):
             return
         ltp = float(pos.get("ltp", 0.0)) if pos else 0.0
         exit_px = self._fill_price(leg_sym, ltp)
-        realized = self.ctx.tracker.record_close(leg_sym, exit_px)
+        mg = self.ctx.tracker.get_martingale_count(leg_sym)
+        qty = self.ctx.tracker.get_net_qty(leg_sym)
+        charges = estimate_trade_charges(qty or 1, exit_px or 1, num_orders=2 + mg)
+        net_pl = self.ctx.tracker.record_close(leg_sym, exit_px, charges)
         log_strategy_event(self.symbol, self.active["side"], "CLOSE_BOOKED",
-                           pl=round(realized, 2), details=f"{leg_sym} booked={round(realized, 2)}")
+                           pl=round(net_pl, 2),
+                           details=f"{leg_sym} net=Rs{round(net_pl, 2)} tax=Rs{round(charges, 2)}")
         self.active = None
         self.pending_close = False
         self._last_pair = None

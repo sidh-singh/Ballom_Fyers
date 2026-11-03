@@ -206,22 +206,23 @@ BALANCE_SOURCE_TITLES = ["total balance", "available balance"]
 #  CHARGES / TAXES  (exact, from dev_trading constants.py)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-BROKERAGE_PER_ORDER = 20.0
-STT_OPTIONS_RATE    = 0.000625
-EXCHANGE_TXN_RATE   = 0.000495
-GST_RATE            = 0.18
-STAMP_DUTY_RATE     = 0.00003
-SEBI_PER_CRORE      = 10.0
+# Rates verified against fyers.in/charges-list (2026-11-03). Edit here if Fyers revises.
+BROKERAGE_PER_ORDER = 20.0         # flat ₹20 per executed order (options)
+STT_OPTIONS_RATE    = 0.0015       # 0.15% on SELL premium (Fyers charges-list)
+EXCHANGE_TXN_RATE   = 0.000355299  # 0.0355299% on premium, NSE (incl. IPFT) — per side
+GST_RATE            = 0.18         # 18% on (brokerage + exchange txn + SEBI)
+STAMP_DUTY_RATE     = 0.00003      # 0.003% on BUY premium
+SEBI_PER_CRORE      = 10.0         # ₹10 per crore turnover
 
 
 def estimate_trade_charges(qty, ltp, num_orders: int = 2) -> float:
-    """Estimated round-trip charges (₹) for a Fyers options trade.
-    num_orders = 2 + martingale_count (entry + exit + each add)."""
+    """Estimated round-trip charges (₹) for a Fyers options trade, per the Fyers
+    charges list. num_orders = 2 + martingale_count (entry + exit + each add)."""
     turnover  = abs(qty) * ltp
     brokerage = BROKERAGE_PER_ORDER * num_orders
-    stt       = STT_OPTIONS_RATE * turnover
-    exchange  = EXCHANGE_TXN_RATE * turnover * 2
+    stt       = STT_OPTIONS_RATE * turnover          # sell side only
+    exchange  = EXCHANGE_TXN_RATE * turnover * 2      # both sides
     sebi      = (turnover * 2 / 1_00_00_000) * SEBI_PER_CRORE
     gst       = GST_RATE * (brokerage + exchange + sebi)
-    stamp     = STAMP_DUTY_RATE * turnover
+    stamp     = STAMP_DUTY_RATE * turnover            # buy side only
     return round(brokerage + stt + exchange + gst + stamp + sebi, 2)
