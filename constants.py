@@ -266,6 +266,7 @@ PEAK_LOOKBACK = 20             # candles scanned for the latest pivot
 PIVOT_WIDTH   = 2              # bars required on each side to confirm a pivot (k)
 RSI_PEAK_OB   = 60             # a HIGH pivot on RSI counts only if value >= this (MACD stays unbounded)
 RSI_PEAK_OS   = 40             # a LOW  pivot on RSI counts only if value <= this
+RSI_GRAPH_BARS = 40            # bars each dashboard RSI/MACD pivot mini-chart plots (> PEAK_LOOKBACK)
 
 REENTRY_COOLDOWN_SECONDS = 300 # block a fresh entry for this long after any close
 
