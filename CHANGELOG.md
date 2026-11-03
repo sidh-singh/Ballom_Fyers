@@ -1,5 +1,29 @@
 # CHANGELOG — `fyers_live` / `fyers_demo`
 
+## 2026-11-03 — RSI+MACD NETTING strategy (variant A) + full docs
+
+Ported the Alcadeias RSI+MACD slope strategy (branch `rsimacd_btcusd1_wd_exp_h`) onto
+Fyers, replacing the HAM/SHA strategy on this branch. SHA removed.
+
+- **indicator.py:** + `calculate_macd` (TradingView `ta.macd`, 12/26/9) and
+  + `latest_pivot_slope` (newest confirmed RSI / MACD-histogram pivot → sign; RSI
+  pivots gated to the OB/OS bands 60/40, MACD side chosen by the signal-line sign).
+- **constants.py:** MACD params; per-section weighted-score config
+  OPEN={H4,M5} / BOOK={M15} / FORCE_CLOSE={M15,H1,H4,D1}; thresholds ENTRY_S=2,
+  LADDER_S=2, FORCE_CLOSE_S=12, BOOK_S=1; auto-derived SLOPE_TIMEFRAMES; pivot params
+  (lookback 20, width 2, RSI bands 60/40); REENTRY_COOLDOWN_SECONDS=300; D1→Fyers 'D'.
+- **symbol_worker.py:** per-bar slope/RSI frame fetch across M5/M15/H1/H4/D1 (+M1 for
+  the ladder), post-close 300 s re-entry cooldown, new signal call + slope/score payload.
+- **strategy.py:** entry via the OPEN-score agreement gate (open≥2 and the force-close
+  score not opposing), force-close via fc_score≤−12, RSI Fibo DCA ladder (1→M1…5→H4).
+  **Profit book (variant A):** close when `cycle_pl > ₹100×units+charges` AND the M15
+  BOOK score reverses — lets winners run until momentum turns, never books a net loss.
+- **dashboard.py:** RSI+MACD slope/score panel (open/book/fc + per-TF ▲▼ arrows +
+  variant badge) replaces the SHA squares.
+- **docs:** `TRADING_LOGIC.md` rewritten for variant A; `BRANCHES.md` added (system map).
+- Verified: compiles on Python 3.11; unit-tested entry, book, force-close, DCA-add,
+  cooldown, chop-block and below-floor.
+
 ## 2026-11-03 — Fix: commodity fib-DCA ladder never added (RSI used wrong symbol)
 
 - `symbol_worker._rsi_one` fetched `self.underlying` (the placeholder `MCX:GOLDM-FUT`)
