@@ -1,5 +1,24 @@
 # CHANGELOG — `fyers_live` / `fyers_demo`
 
+## 2026-11-03 — RSI+MACD HEDGING strategy (variant B) + full docs
+
+Ported the Alcadeias RSI+MACD slope strategy (branch `rsimacd_h6_btcusd1_wd_exp_h`)
+onto Fyers, replacing the HAM/SHA strategy on this branch. SHA removed. Entry,
+force-close and the Fibo DCA ladder are identical to the netting branches.
+
+- **indicator.py / constants.py / symbol_worker.py / dashboard.py:** the same RSI+MACD
+  core as the netting branches (`calculate_macd` + `latest_pivot_slope`; per-section
+  score config OPEN={H4,M5} / FORCE_CLOSE={M15,H1,H4,D1}; per-bar slope/RSI fetch across
+  M5/M15/H1/H4/D1 + M1; post-close 300 s re-entry cooldown; slope/score dashboard panel).
+- **strategy.py:** entry via the OPEN-score agreement gate, force-close via
+  fc_score≤−12, RSI Fibo DCA ladder (1→M1…5→H4). **Profit book (variant B):** close the
+  moment `cycle_pl > ₹100×units+charges` — the fixed tax-aware target that scales with
+  the balance tier (= the current-Fyers rule). No BOOK-score reversal (that is the
+  netting variant).
+- **docs:** `TRADING_LOGIC.md` rewritten for variant B; `BRANCHES.md` added (system map).
+- Verified: compiles on Python 3.11; unit-tested entry, target book, force-close,
+  DCA-add, cooldown and chop-block.
+
 ## 2026-11-03 — Fix: commodity fib-DCA ladder never added (RSI used wrong symbol)
 
 - `symbol_worker._rsi_one` fetched `self.underlying` (the placeholder `MCX:GOLDM-FUT`)
