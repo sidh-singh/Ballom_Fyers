@@ -32,7 +32,7 @@ from plotly.subplots import make_subplots
 from constants import (
     STATE_DIR, API_USAGE_FILE, APP_STATUS_FILE, STRATEGY_LOG_DIR,
     SIGNAL_STATE_FILE, ACCOUNT_STATE_FILE, API_LIMITS,
-    RSI_OVERSOLD, RSI_OVERBOUGHT, now_ist,
+    RSI_OVERSOLD, RSI_OVERBOUGHT, RSI_DCA_LADDER_TIMEFRAMES, now_ist,
 )
 
 PROFIT_HISTORY = STATE_DIR / "profit_history.json"
@@ -204,6 +204,194 @@ def _rsi_block(rsi):
     return html.Div(cells, style={"display": "flex", "gap": "6px", "flexWrap": "wrap", "margin": "6px 0"})
 
 
+def _fmt_age(sec):
+    if sec is None:
+        return ""
+    sec = int(sec)
+    if sec < 60:
+        return f"{sec}s"
+    if sec < 3600:
+        return f"{sec // 60}m"
+    return f"{sec // 3600}h{(sec % 3600) // 60:02d}m"
+
+
+def _profit_meter(cycle_pl, target):
+    """₹ progress meter: live cycle P&L toward the booking target (₹100×units + tax). Green once
+    bookable (≥ target), red if underwater, amber climbing — with the target line + % progress."""
+    try:
+        v = float(cycle_pl)
+    except (TypeError, ValueError):
+        v = 0.0
+    try:
+        t = float(target)
+    except (TypeError, ValueError):
+        t = 0.0
+    hi = max(t * 1.25, v * 1.1, 1.0)
+    lo = min(0.0, v * 1.1)
+    span = (hi - lo) or 1.0
+
+    def pos(x):
+        return max(0.0, min(100.0, (x - lo) / span * 100.0))
+
+    t_pct, zero_pct, p = pos(t), pos(0), pos(v)
+    booked = v >= t and t > 0
+    col = C["green"] if booked else (C["red"] if v < 0 else C["amber"])
+    fl, fw = (zero_pct, p - zero_pct) if v >= 0 else (p, zero_pct - p)
+    pct_to = (v / t * 100.0) if t else 0.0
+    track = html.Div(style={"position": "relative", "height": "12px", "background": C["bg"],
+                            "borderRadius": "6px", "border": f"1px solid {C['border']}"}, children=[
+        html.Div(style={"position": "absolute", "top": "1px", "bottom": "1px", "left": f"{fl}%",
+                        "width": f"{fw}%", "background": col, "borderRadius": "3px", "opacity": "0.9"}),
+        html.Div(style={"position": "absolute", "left": f"{zero_pct}%", "top": "-2px",
+                        "bottom": "-2px", "width": "1px", "background": C["muted"]}),
+        html.Div(style={"position": "absolute", "left": f"{t_pct}%", "top": "-3px", "bottom": "-3px",
+                        "width": "2px", "background": C["green"]}),
+        html.Div(style={"position": "absolute", "left": f"{p}%", "top": "50%",
+                        "transform": "translate(-50%, -50%)", "width": "11px", "height": "11px",
+                        "borderRadius": "50%", "background": col,
+                        "border": f"2px solid {C['card']}", "boxShadow": f"0 0 0 1px {col}"}),
+    ])
+    return html.Div(style={"padding": "5px 2px 4px"}, children=[
+        html.Div([
+            html.Span("PROFIT → BOOK", style={"fontSize": "10px", "fontWeight": "700",
+                      "color": C["dim"], "letterSpacing": "0.4px"}),
+            html.Span(f"target ₹{t:,.0f}", style={"fontSize": "9px", "color": C["muted"],
+                      "marginLeft": "auto"}),
+        ], style={"display": "flex", "alignItems": "baseline", "marginBottom": "5px"}),
+        html.Div([
+            html.Span(f"₹{v:,.0f}", style={"fontWeight": "800", "fontSize": "15px", "color": col,
+                      "minWidth": "54px", "textAlign": "right"}),
+            html.Div(track, style={"flex": "1"}),
+            _chip("BOOKABLE" if booked else f"{max(0, pct_to):.0f}%", col),
+        ], style={"display": "flex", "alignItems": "center", "gap": "9px"}),
+    ])
+
+
+def _rsi_bar(tf_label, rsi, side, is_next=False):
+    """One timeframe's RSI as a 0–100 bar: faint OS/OB zones, the add-side threshold line, the
+    fill + current marker, and the value + OS/OB/— chip. The next ladder tier is ring-highlighted."""
+    try:
+        v = round(float(rsi), 1)
+    except (TypeError, ValueError):
+        v = 50.0
+    if v <= RSI_OVERSOLD:
+        col, lab = C["green"], "OS"
+    elif v >= RSI_OVERBOUGHT:
+        col, lab = C["red"], "OB"
+    else:
+        col, lab = C["grey"], "—"
+    thr = RSI_OVERSOLD if side == "CE" else RSI_OVERBOUGHT
+    thr_col = C["green"] if side == "CE" else C["red"]
+    fillpct = max(0.0, min(100.0, v))
+    track = html.Div(style={"position": "relative", "height": "12px", "background": C["bg"],
+                            "borderRadius": "6px", "border": f"1px solid {C['border']}",
+                            "overflow": "hidden"}, children=[
+        html.Div(style={"position": "absolute", "left": "0", "top": "0", "bottom": "0",
+                        "width": f"{RSI_OVERSOLD}%", "background": C["green"], "opacity": "0.12"}),
+        html.Div(style={"position": "absolute", "right": "0", "top": "0", "bottom": "0",
+                        "width": f"{100 - RSI_OVERBOUGHT}%", "background": C["red"], "opacity": "0.12"}),
+        html.Div(style={"position": "absolute", "left": "0", "top": "0", "bottom": "0",
+                        "width": f"{fillpct}%", "background": col, "opacity": "0.5"}),
+        html.Div(style={"position": "absolute", "left": f"{thr}%", "top": "-2px", "bottom": "-2px",
+                        "width": "2px", "background": thr_col}),
+        html.Div(style={"position": "absolute", "left": f"{fillpct}%", "top": "50%",
+                        "transform": "translate(-50%, -50%)", "width": "9px", "height": "9px",
+                        "borderRadius": "50%", "background": col, "border": f"2px solid {C['card']}"}),
+    ])
+    return html.Div(style={
+        "display": "grid", "gridTemplateColumns": "32px 1fr 52px", "gap": "8px",
+        "alignItems": "center", "padding": "3px 6px", "borderRadius": "7px",
+        "border": f"1px solid {C['amber'] if is_next else 'transparent'}",
+        "background": "rgba(245,158,11,0.06)" if is_next else "transparent"}, children=[
+        html.Span(tf_label, style={"fontWeight": "700", "fontSize": "11px", "color": C["dim"]}),
+        track,
+        html.Div([
+            html.Span(f"{v:.0f}", style={"fontWeight": "800", "fontSize": "13px", "color": col}),
+            html.Span(lab, style={"fontSize": "9px", "color": col, "marginLeft": "4px"}),
+        ], style={"textAlign": "right"}),
+    ])
+
+
+def _rsi_ladder_block(rsi, ladder):
+    """RSI for every DCA-ladder timeframe (M1/M5/M15/H1/H4) as bars; the next add tier (while a
+    basket is open) is highlighted, so the ladder progression reads at a glance."""
+    lad = ladder or {}
+    side = lad.get("side", "CE")
+    next_tf = lad.get("next_tf")
+    rows = []
+    for tf in RSI_DCA_LADDER_TIMEFRAMES:
+        if tf not in rsi:
+            continue
+        rows.append(_rsi_bar(RSI_LABEL.get(tf, tf), rsi[tf], side, is_next=(tf == next_tf)))
+    if not rows:
+        return html.Div("no RSI yet", style={"color": C["muted"], "fontSize": "11px", "margin": "6px 0"})
+    note = ""
+    if next_tf and not lad.get("is_final"):
+        note = f"  ·  next add @ {RSI_LABEL.get(next_tf, next_tf)}"
+    elif next_tf and lad.get("is_final"):
+        note = f"  ·  final close @ {RSI_LABEL.get(next_tf, next_tf)}"
+    title = html.Div("RSI DCA LADDER" + note, style={
+        "color": C["dim"], "fontSize": "10px", "fontWeight": "700", "margin": "6px 0 3px",
+        "letterSpacing": "0.3px"})
+    return html.Div([title] + rows, style={"margin": "4px 0"})
+
+
+def _next_position_gauge(rsi, ladder):
+    """Prominent gauge for the NEXT ladder step: that timeframe's RSI vs its OB/OS add trigger,
+    so you can see how close the basket is to the next position (or the final forced close)."""
+    if not ladder:
+        return None
+    tf = ladder.get("next_tf")
+    side = ladder.get("side", "CE")
+    is_final = ladder.get("is_final")
+    try:
+        v = round(float(rsi.get(tf, 50)), 1)
+    except (TypeError, ValueError):
+        v = 50.0
+    thr = RSI_OVERSOLD if side == "CE" else RSI_OVERBOUGHT
+    thr_col = C["green"] if side == "CE" else C["red"]
+    triggered = (v <= thr) if side == "CE" else (v >= thr)
+    dist = (v - thr) if side == "CE" else (thr - v)
+    label = RSI_LABEL.get(tf, tf)
+    act = "FINAL CLOSE" if is_final else "NEXT ADD"
+    col = C["amber"] if triggered else C["blue"]
+    fillpct = max(0.0, min(100.0, v))
+    track = html.Div(style={"position": "relative", "height": "16px", "background": C["bg"],
+                            "borderRadius": "8px", "border": f"1px solid {C['border']}",
+                            "overflow": "hidden"}, children=[
+        html.Div(style={"position": "absolute", "left": "0", "top": "0", "bottom": "0",
+                        "width": f"{RSI_OVERSOLD}%", "background": C["green"], "opacity": "0.14"}),
+        html.Div(style={"position": "absolute", "right": "0", "top": "0", "bottom": "0",
+                        "width": f"{100 - RSI_OVERBOUGHT}%", "background": C["red"], "opacity": "0.14"}),
+        html.Div(style={"position": "absolute", "left": "0", "top": "0", "bottom": "0",
+                        "width": f"{fillpct}%", "background": col, "opacity": "0.5"}),
+        html.Div(style={"position": "absolute", "left": f"{thr}%", "top": "-3px", "bottom": "-3px",
+                        "width": "2px", "background": thr_col}),
+        html.Div(style={"position": "absolute", "left": f"{fillpct}%", "top": "50%",
+                        "transform": "translate(-50%, -50%)", "width": "11px", "height": "11px",
+                        "borderRadius": "50%", "background": col, "border": f"2px solid {C['card']}",
+                        "boxShadow": f"0 0 0 1px {col}"}),
+    ])
+    cmp = "≤" if side == "CE" else "≥"
+    sub = (f"TRIGGERED — {act.lower()} armed" if triggered
+           else f"{abs(dist):.0f} RSI pts to {act.lower()} ({cmp}{thr})")
+    return _card([
+        html.Div([
+            html.Span(f"{act} · {label} RSI", style={"fontSize": "11px", "fontWeight": "700",
+                      "color": C["dim"], "letterSpacing": "0.3px"}),
+            html.Span("CE/buy leg" if side == "CE" else "PE/sell leg", style={
+                      "fontSize": "9px", "color": C["muted"], "marginLeft": "auto"}),
+        ], style={"display": "flex", "alignItems": "baseline", "marginBottom": "6px"}),
+        html.Div([
+            html.Span(f"{v:.0f}", style={"fontWeight": "800", "fontSize": "18px", "color": col,
+                      "minWidth": "34px"}),
+            html.Div(track, style={"flex": "1"}),
+            _chip(act if triggered else f"{abs(dist):.0f}→", col),
+        ], style={"display": "flex", "alignItems": "center", "gap": "9px"}),
+        html.Div(sub, style={"fontSize": "10px", "color": C["muted"], "marginTop": "5px"}),
+    ], pad="9px 12px", extra={"background": C["card2"], "marginTop": "8px"})
+
+
 def _pair_block(pair):
     if not pair:
         return html.Div("scanning…", style={"color": C["muted"], "fontSize": "12px"})
@@ -229,17 +417,25 @@ def _pair_block(pair):
 
 def _position_block(pos):
     if not pos:
-        return html.Div([_chip("FLAT", C["grey"])], style={"margin": "6px 0"})
+        return html.Div([_chip("FLAT", C["grey"])], style={"margin": "8px 0 2px"})
     cpl = float(pos.get("cycle_pl", 0) or 0)
     side_col = C["green"] if pos.get("side") == "CE" else C["red"]
-    return html.Div([
+    count = pos.get("count", pos.get("mg", 0) + 1)
+    mx = pos.get("max_positions", 6)
+    age = _fmt_age(pos.get("age_s"))
+    kids = [
         _chip(f"IN {pos.get('side')}", side_col),
         html.Span(f"  qty {pos.get('netQty')}", style={"color": C["text"], "marginLeft": "8px"}),
-        html.Span(f"  L{pos.get('mg',0)}", style={"color": C["amber"], "marginLeft": "8px",
-                  "fontSize": "12px"}),
-        html.Span(f"  cycle ₹{cpl:,.2f}", style={"color": _pl_color(cpl), "marginLeft": "8px",
-                  "fontWeight": "700"}),
-    ], style={"margin": "6px 0"})
+        html.Span(f"  L{pos.get('mg', 0)} · {count}/{mx}", style={"color": C["amber"],
+                  "marginLeft": "8px", "fontSize": "12px", "fontWeight": "700"}),
+    ]
+    if age:
+        kids.append(html.Span(f"  {age}", style={"color": C["muted"], "marginLeft": "8px",
+                    "fontSize": "11px"}))
+    kids.append(html.Span(f"  cycle ₹{cpl:,.2f}", style={"color": _pl_color(cpl),
+                "marginLeft": "8px", "fontWeight": "700"}))
+    return html.Div(kids, style={"margin": "8px 0 2px", "display": "flex", "alignItems": "center",
+                                 "flexWrap": "wrap"})
 
 
 def symbol_panel(symbol, s, closes):
@@ -255,15 +451,24 @@ def symbol_panel(symbol, s, closes):
         html.Span(_chip("RSI-BLOCK", C["amber"]) if rsi_blocked else "",
                   style={"marginLeft": "8px"}),
     ], style={"display": "flex", "alignItems": "center", "marginBottom": "10px"})
-    left = _card([
+    pos = s.get("position")
+    ladder = s.get("ladder")
+    rsi = s.get("rsi", {})
+    left_kids = [
         head,
         _pair_block(s.get("pair")),
-        html.Div(style={"height": "10px"}),
+        html.Div(style={"height": "8px"}),
         _sha_block("SHA signal", s.get("sha", {})),
         _sha_block("SHA trend", s.get("sha_trend", {})),
-        _rsi_block(s.get("rsi", {})),
-        _position_block(s.get("position")),
-    ], extra={"flex": "1.1"})
+    ]
+    if pos:
+        ng = _next_position_gauge(rsi, ladder)
+        if ng is not None:
+            left_kids.append(ng)
+        left_kids.append(_profit_meter(pos.get("cycle_pl"), pos.get("target")))
+    left_kids.append(_rsi_ladder_block(rsi, ladder))
+    left_kids.append(_position_block(pos))
+    left = _card(left_kids, extra={"flex": "1.1"})
     g = sum(float(r.get("effective_pl", 0)) for r in closes)
     tx = sum(float(r.get("charges", 0)) for r in closes)
     n = round(sum(float(r.get("net_pl", r.get("effective_pl", 0))) for r in closes), 2)
