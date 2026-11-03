@@ -92,11 +92,31 @@ MARKET_HOURS = {
 #  DATA day-limit (5,000) is the binding constraint. Exceed → -429.
 #  Breaching per-minute >3×/day → blocked for the whole day: never breach.
 
-API_LIMITS = {
+API_LIMITS = {   # Standard plan (no active Fyers Prime)
     "DATA":     {"sec": 5,  "min": 50,  "day": 5_000},
     "ORDER":    {"sec": 10, "min": 200, "day": 100_000},
     "USERINFO": {"sec": 10, "min": 200, "day": 100_000},
 }
+API_LIMITS_PRIME = {   # Fyers Prime (paid subscription) — higher limits
+    "DATA":     {"sec": 10, "min": 500, "day": 500_000},
+    "ORDER":    {"sec": 10, "min": 500, "day": 500_000},
+    "USERINFO": {"sec": 10, "min": 500, "day": 500_000},
+}
+
+# Plan is NOT exposed by the Fyers API — set at runtime from config (or an auto-probe).
+# Default Standard (safe: lower limits avoid -429 if we guess wrong).
+API_PLAN = "standard"   # "standard" | "prime"
+
+def set_api_plan(plan: str) -> None:
+    global API_PLAN
+    API_PLAN = "prime" if str(plan).lower() == "prime" else "standard"
+
+def active_api_limits() -> dict:
+    return API_LIMITS_PRIME if API_PLAN == "prime" else API_LIMITS
+
+def brokerage_per_order() -> float:
+    """₹ per order — Prime lowers it ₹20→₹15 (the only tax/charge Prime changes)."""
+    return BROKERAGE_PER_ORDER_PRIME if API_PLAN == "prime" else BROKERAGE_PER_ORDER
 
 # FyersModel method name → rate-limit category.
 ENDPOINT_CATEGORY = {
@@ -214,7 +234,8 @@ DEMO_START_BALANCE = 90_000    # ₹ simulated starting balance (drives unit tie
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # Rates verified against fyers.in/charges-list (2026-11-03). Edit here if Fyers revises.
-BROKERAGE_PER_ORDER = 20.0         # flat ₹20 per executed order (options)
+BROKERAGE_PER_ORDER       = 20.0   # flat ₹20 per executed order (Standard, options)
+BROKERAGE_PER_ORDER_PRIME = 15.0   # ₹15 per order with Fyers Prime
 STT_OPTIONS_RATE    = 0.0015       # 0.15% on SELL premium (Fyers charges-list)
 EXCHANGE_TXN_RATE   = 0.000355299  # 0.0355299% on premium, NSE (incl. IPFT) — per side
 GST_RATE            = 0.18         # 18% on (brokerage + exchange txn + SEBI)
@@ -226,7 +247,7 @@ def estimate_trade_charges(qty, ltp, num_orders: int = 2) -> float:
     """Estimated round-trip charges (₹) for a Fyers options trade, per the Fyers
     charges list. num_orders = 2 + martingale_count (entry + exit + each add)."""
     turnover  = abs(qty) * ltp
-    brokerage = BROKERAGE_PER_ORDER * num_orders
+    brokerage = brokerage_per_order() * num_orders    # ₹20 Standard / ₹15 Prime
     stt       = STT_OPTIONS_RATE * turnover          # sell side only
     exchange  = EXCHANGE_TXN_RATE * turnover * 2      # both sides
     sebi      = (turnover * 2 / 1_00_00_000) * SEBI_PER_CRORE

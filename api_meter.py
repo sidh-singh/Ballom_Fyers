@@ -29,14 +29,13 @@ from collections import defaultdict, deque
 from os import replace
 from time import monotonic, sleep
 
+import constants
 from constants import (
-    API_LIMITS, ENDPOINT_CATEGORY, DEFAULT_CATEGORY,
-    API_USAGE_FILE, now_ist,
+    ENDPOINT_CATEGORY, DEFAULT_CATEGORY, API_USAGE_FILE, now_ist,
 )
 
 logger = logging.getLogger("api_meter")
-
-PLAN = "Standard"          # Fyers API plan (see ARCHITECTURE §6)
+                           # limits/plan read live from constants (plan-aware)
 _FLUSH_MIN_INTERVAL = 1.0  # seconds — debounce snapshot writes
 
 
@@ -93,7 +92,7 @@ class ApiMeter:
 
     # ── core throttle ───────────────────────────────────────────────────────
     def _acquire(self, cat: str) -> None:
-        lim = API_LIMITS[cat]
+        lim = constants.active_api_limits()[cat]
         while True:
             acquired = False
             wait = 0.0
@@ -166,7 +165,7 @@ class ApiMeter:
         """Build the usage snapshot. Caller must hold the lock."""
         now = monotonic()
         cats = {}
-        for cat, lim in API_LIMITS.items():
+        for cat, lim in constants.active_api_limits().items():
             dq = self._win[cat]
             min_count = sum(1 for t in dq if t > now - 60)
             sec_count = sum(1 for t in dq if t > now - 1)
@@ -178,7 +177,7 @@ class ApiMeter:
                         "pct": round(100 * day_count / lim["day"], 1)},
             }
         return {"timestamp": now_ist().strftime("%Y-%m-%d %H:%M:%S"),
-                "plan": PLAN, "categories": cats}
+                "plan": constants.API_PLAN, "categories": cats}
 
     def _safe_write(self, snap: dict) -> None:
         try:

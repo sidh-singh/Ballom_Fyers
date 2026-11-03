@@ -31,5 +31,8 @@
         }
     ],
     "max_balance_usage": 90000,
-    "brake": 0
+    "brake": 0,
+    "api_plan": "standard",
+    "prime_renewal": "",
+    "_plan_note": "api_plan: standard | prime | auto (auto probes a >50-symbol quote). Prime raises API limits + lowers brokerage ₹20→₹15 (taxes unchanged). prime_renewal: YYYY-MM-DD for the dashboard renewal countdown (Fyers API does not expose it)."
 }
