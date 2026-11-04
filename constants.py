@@ -145,13 +145,19 @@ MCX_COM_URL = "https://public.fyers.in/sym_details/MCX_COM.csv"
 # Signals are index-driven (O2), so the scan no longer needs per-option candle
 # history — it selects on liquidity + moneyness only (far fewer API calls).
 SCAN_STRIKE_COUNT = 20
-SCAN_MIN_DTE      = 10     # prefer expiries with ≥ this many days (carry-friendly)
-SCAN_MAX_DTE      = 45     # …and ≤ this many
+SCAN_MIN_DTE      = 7      # expiry window: not too close to expiry — want ≥ ~1 week …
+SCAN_MAX_DTE      = 31     # … and ≤ ~1 month. Index weeklies land here; gold/silver (monthly)
+                          # fall back to their nearest contract via the DTE-floor fallback.
 SCAN_MIN_OI       = 10000  # skip illiquid strikes (unless they have volume)
-SCAN_MAX_PREMIUM_PER_LOT = 30000   # ₹ — skip strikes whose premium × lot_size exceeds
-                                   # this (per-lot cost cap for a conservative start).
-                                   # 0 = no cap. Per-symbol override: "max_premium_per_lot"
-                                   # in symbols.json.
+SCAN_MAX_PREMIUM_PER_LOT = 30000   # ₹ — skip strikes whose premium × lot_size EXCEEDS this
+                                   # (per-lot cost cap). 0 = no cap.
+SCAN_MIN_PREMIUM_PER_LOT = 10000   # ₹ — skip strikes whose premium × lot_size is BELOW this,
+                                   # so we buy near-ATM options with real value / history (not
+                                   # cheap far-OTM). Band = [MIN, MAX] per lot. 0 = no floor.
+                                   # Per-symbol override: "min_premium_per_lot" in symbols.json.
+SCAN_ROUND_STRIKE_STEP = 1000      # ₹ — prefer strikes near a round multiple of this (the
+                                   # liquid, long-history strikes, e.g. NIFTY 24000/25000/26000).
+                                   # A scoring bonus, not a filter. Per-symbol: "round_strike_step".
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -214,7 +220,9 @@ STEP_UP_BALANCE      = 100_000  # ₹ per unit tier: units = floor(bal/this)+1 (
                                 #   <1L→1 lot, 1L–2L→2 lots, 2L–3L→3 lots, …
                                 #   (per-symbol override in symbols.json)
 UNIT_MAX_LIMIT       = 10       # cap on units
-HEDGE_PER_UNIT       = 100      # ₹ profit target per unit (Fyers analog of $1/unit)
+HEDGE_PER_UNIT       = 300      # ₹ NET profit target per unit; total target = this×units + taxes,
+                                #   so it scales with balance (unit tiers). ₹300 ≈ ~10–15 NIFTY pts
+                                #   on 1 lot — clears taxes + noise. Per-symbol: "hedge_per_unit".
 MAX_MARTINGALE_LEVEL = 5        # 5 RSI adds (M1/M5/M15/H1/H4), then H6 forced close
 PRODUCT_TYPE         = "MARGIN" # carry / overnight
 
@@ -257,10 +265,16 @@ FORCE_CLOSE_SCORE_WEIGHTS = {'M15': 1}
 
 # Slope fetch list (auto-derived union of every TF named in any section above),
 # mapped short-key -> 'TIMEFRAME_<key>'. Adding a TF to a section dict is enough.
-# With the current sections this is {H4, M5, M15} — all already fetched for the RSI
-# ladder, so slopes add no extra history calls (D1/H1 are no longer needed for slopes).
+# INDEX slope set (computed on the main index, e.g. NSE:NIFTY50-INDEX): drives OPEN (entry +
+# ladder-add gate) and the entry agreement-gate veto (FORCE_CLOSE score at entry). With the
+# current sections this is {H4, M5, M15}.
 SLOPE_TIMEFRAMES = ['TIMEFRAME_' + _tf for _tf in dict.fromkeys(
     _k for _d in (OPEN_SCORE_WEIGHTS, BOOK_SCORE_WEIGHTS, FORCE_CLOSE_SCORE_WEIGHTS) for _k in _d
+)]
+# LEG slope set (computed on the ACTIVE CE/PE option's own candles, once a basket is open):
+# drives the profit-BOOK and FORCE-CLOSE exits. Union of the two exit sections = {M5, M15}.
+LEG_SLOPE_TIMEFRAMES = ['TIMEFRAME_' + _tf for _tf in dict.fromkeys(
+    _k for _d in (BOOK_SCORE_WEIGHTS, FORCE_CLOSE_SCORE_WEIGHTS) for _k in _d
 )]
 
 # ── Pivot-slope params (RSI + MACD-histogram) ──
@@ -271,6 +285,9 @@ RSI_PEAK_OS   = 40             # a LOW  pivot on RSI counts only if value <= thi
 RSI_GRAPH_BARS = 40            # bars each dashboard RSI/MACD pivot mini-chart plots (> PEAK_LOOKBACK)
 
 REENTRY_COOLDOWN_SECONDS = 300 # block a fresh entry for this long after any close
+MIN_HOLD_SECONDS = 180         # after an entry, suppress BOOK + FORCE-CLOSE for this long so the
+                               # basket can't open-then-close on a stale leg pivot (anti-vibration).
+                               # Adds (DCA ladder) are still allowed; entry is state-gated anyway.
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  CHARGES / TAXES  (exact, from dev_trading constants.py)
