@@ -1,5 +1,16 @@
 # CHANGELOG — `fyers_live` / `fyers_demo`
 
+## 2026-11-04 — Fix: H4 / H1 history fetch failed (Fyers 100-day intraday cap)
+
+`fetch_historical_data` walked back 500 bars to build `range_from`; on **H4** (240-min) that spans
+~200 calendar days for MCX gold/silver and ~440 for the index (H1 ~110 for the index) — beyond
+Fyers' **per-request limit of 100 days** for intraday resolutions (1m–240m; 366 for daily, 30 for
+seconds). Fyers rejected the request, so the **H4 fetch failed for GOLDM/SILVERM** (and silently on
+NIFTY), which zeroed the H4 slope the OPEN score depends on. Now `start_dt` is clamped to just under
+the cap (95d intraday / 360d daily / 28d seconds); M5/M15/M1 are unaffected (a few-day span), and
+H4/H1 still return 100+ bars — ample for RSI(14) + the latest-pivot slope. Shared fix in
+`fyers_api.py` (demo inherits it).
+
 ## 2026-11-04 — Prime renewal date set (annual)
 
 `symbols.json "prime_renewal"` = **2027-11-04** (annual Fyers Prime, bought 2026-11-04). The
