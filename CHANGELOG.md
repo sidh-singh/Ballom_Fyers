@@ -1,5 +1,15 @@
 # CHANGELOG — `fyers_live` / `fyers_demo`
 
+## 2026-11-04 — Docs: BRANCHES.md refreshed to the current logic
+
+Brought the system map up to date with every recent change: the RSI+MACD **index/leg split**
+(open on the index, book + force-close on the CE/PE leg's own chart), the retuned sections (BOOK
+= M5 **both-reverse** ±2, FORCE_CLOSE = M15 **either-reverse** ±1), the **180 s min-hold**
+anti-vibration, the **₹300-net** profit floor (taxes stacked on top), and a new **§8 Operational
+& tuning notes** — 120-candle fetch + convergence reasoning, the Fyers **100-day intraday cap** +
+clamp, index/commodity market-close times (15:30 / 23:30), the **one-loop worker (15 s idle)** vs
+the separate supervisor thread, and **Prime being config-driven** (no API field exposes it).
+
 ## 2026-11-04 — Lighter history fetch (120 candles) + faster, clearer worker loop
 
 - **Candle counts cut:** `RSI_CANDLE_COUNT` 500→**120**, `SHA_CANDLE_COUNT` 300→**120**. RMA-14 RSI,
