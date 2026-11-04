@@ -1,5 +1,28 @@
 # CHANGELOG — `fyers_live` / `fyers_demo`
 
+## 2026-11-04 — Book/force-close read the CE/PE leg chart + anti-vibration + scan band + ₹300
+
+- **Data-source split:** OPEN (entry + ladder-add gate + the entry veto) stays on the INDEX;
+  BOOK (M5) and FORCE-CLOSE (M15) now read the ACTIVE CE/PE leg's OWN option candles — so exits
+  follow the premium you actually hold. (Hedging: force-close on the leg; booking stays the
+  ₹ target.) `LEG_SLOPE_TIMEFRAMES = {M5, M15}`.
+- **Anti-vibration:** `MIN_HOLD_SECONDS` (180 s) after an entry suppresses BOTH book + force-close
+  so a basket can never open-then-close on a stale leg pivot. Adds (DCA ladder) still allowed;
+  entry is state-gated. The worker tracks the basket age (`_entry_mono`) and passes `exit_allowed`.
+- **Scanner:** premium **BAND** — new `SCAN_MIN_PREMIUM_PER_LOT` (₹10k floor) alongside the ₹30k
+  cap, so we buy near-ATM options with real value/history, not cheap far-OTM; a **round-strike**
+  bonus (`SCAN_ROUND_STRIKE_STEP` = ₹1000 → NIFTY 24000/25000/26000); expiry window **7–31 DTE**
+  with a "nearest ≥ MIN" fallback (gold/silver monthly still resolves). Per-symbol overridable
+  (`min_premium_per_lot` / `max_premium_per_lot` / `round_strike_step`); commodities set
+  `min_premium_per_lot: 0` until tuned.
+- **Profit:** `HEDGE_PER_UNIT` ₹100 → **₹300 NET per unit** (scales with the balance tiers;
+  ~10–15 NIFTY points on 1 lot — clears taxes + noise). `symbols.json` NIFTY `hedge_per_unit` = 300.
+- **Dashboard:** a second pivot grid for the **LEG** (book/force-close) charts; a **MIN-HOLD**
+  countdown chip; meters labelled index (entry) vs CE/PE (book/force-close).
+- **Worker refactor:** `_frame(symbol, tf)` caches index + leg frames; `_leg_slopes()` +
+  `_slope_and_graph()`. Verified on Python 3.11: entry on index, book/force-close on the leg,
+  min-hold blocks both exits.
+
 ## 2026-11-04 — RSI+MACD retune: BOOK→M5 (both), FORCE_CLOSE→M15 (either) + loop timing
 
 Strategy timeframe retune (OPEN unchanged = H4 + M5, both RSI+MACD):
