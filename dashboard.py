@@ -381,12 +381,15 @@ def _slope_block(s):
     ed_col = C["green"] if ed == "BUY" else (C["red"] if ed == "SELL" else C["grey"])
     chop = s.get("entry_chop_block")
     cooldown = not s.get("entry_allowed", True)
+    min_hold = int(s.get("min_hold_left", 0) or 0)
     header = html.Div([
         html.Span("ENTRY", style={"color": C["dim"], "fontSize": "11px", "fontWeight": "700",
                   "marginRight": "6px", "letterSpacing": "0.4px"}),
         _chip(ed, ed_col),
         html.Span(_chip("CHOP", C["amber"]) if chop else "", style={"marginLeft": "6px"}),
         html.Span(_chip("COOLDOWN", C["purple"]) if cooldown else "", style={"marginLeft": "6px"}),
+        html.Span(_chip(f"MIN-HOLD {min_hold}s", C["teal"]) if min_hold > 0 else "",
+                  style={"marginLeft": "6px"}),
     ], style={"display": "flex", "alignItems": "center", "flexWrap": "wrap", "margin": "2px 0 6px"})
 
     fc_axis = _score_axis(FORCE_CLOSE_SCORE_WEIGHTS)
@@ -394,27 +397,28 @@ def _slope_block(s):
     if pos:
         meters.append(_profit_meter(pos.get("cycle_pl"), pos.get("target")))
         if variant == "netting" and scores.get("book") is not None:
-            meters.append(_meter("BOOK (reversal)", f"books ±{BOOK_S:g} in profit",
+            meters.append(_meter("BOOK (CE/PE M5)", f"both reverse ±{BOOK_S:g}",
                           scores.get("book"), BOOK_S, _score_axis(BOOK_SCORE_WEIGHTS),
                           hi=("book SHORT", C["purple"]), lo=("book LONG", C["purple"]),
                           within=("hold", C["grey"])))
-        meters.append(_meter("FORCE-CLOSE", f"closes ±{FORCE_CLOSE_S:g}", scores.get("fc"),
+        meters.append(_meter("FORCE-CLOSE (CE/PE M15)", f"either ±{FORCE_CLOSE_S:g}", scores.get("fc"),
                       FORCE_CLOSE_S, fc_axis, hi=("close SHORT", C["amber"]),
                       lo=("close LONG", C["amber"]), within=("hold", C["grey"])))
     else:
-        meters.append(_meter("OPEN SCORE", f"opens ±{ENTRY_S:g}", scores.get("open"),
+        meters.append(_meter("OPEN SCORE (index)", f"opens ±{ENTRY_S:g}", scores.get("open"),
                       ENTRY_S, _score_axis(OPEN_SCORE_WEIGHTS), hi=("BUY opens", C["green"]),
                       lo=("SELL opens", C["red"]), within=("WAIT", C["grey"])))
-        meters.append(_meter("FORCE-CLOSE (gate)", "must agree", scores.get("fc"),
+        meters.append(_meter("FORCE-CLOSE (index gate)", "must agree", scores.get("fc"),
                       FORCE_CLOSE_S, fc_axis, hi=("favours BUY", C["green"]),
                       lo=("favours SELL", C["red"]), within=("neutral", C["grey"])))
     return html.Div([header] + meters)
 
 
-def _pivot_grid(s):
-    """Full-width grid of per-timeframe RSI + MACD pivot mini-charts (coarsest→finest)."""
-    rg = s.get("rsi_graphs", {}) or {}
-    mg = s.get("macd_graphs", {}) or {}
+def _pivot_grid(rg, mg, title):
+    """Full-width grid of per-timeframe RSI + MACD pivot mini-charts (coarsest→finest) for one
+    source (index or the active CE/PE leg). Returns empty when there are no graphs."""
+    rg = rg or {}
+    mg = mg or {}
     rows = []
     for tf in SLOPE_TF_ORDER:
         if tf not in rg and tf not in mg:
@@ -426,9 +430,8 @@ def _pivot_grid(s):
     if not rows:
         return html.Div()
     return _card([
-        html.Div("RSI + MACD pivot slopes  ·  peak → now, per timeframe",
-                 style={"color": C["dim"], "fontSize": "11px", "margin": "0 0 6px",
-                        "letterSpacing": "0.3px", "fontWeight": "700"}),
+        html.Div(title, style={"color": C["dim"], "fontSize": "11px", "margin": "0 0 6px",
+                               "letterSpacing": "0.3px", "fontWeight": "700"}),
         html.Div(rows),
     ], pad="10px 12px", extra={"marginTop": "2px"})
 
@@ -520,7 +523,14 @@ def symbol_panel(symbol, s, closes):
     ], style={"padding": "4px 10px 2px"})
     right = _card([booked_line, booking_chart(symbol, closes)], pad="8px", extra={"flex": "1.4"})
     top = html.Div([left, right], style={"display": "flex", "gap": "14px", "marginBottom": "10px"})
-    return html.Div([top, _pivot_grid(s)], style={"marginBottom": "16px"})
+    grids = [_pivot_grid(s.get("rsi_graphs"), s.get("macd_graphs"),
+                         "INDEX pivot slopes (entry)  ·  peak → now, per timeframe")]
+    leg_rg, leg_mg = s.get("leg_rsi_graphs"), s.get("leg_macd_graphs")
+    if leg_rg or leg_mg:
+        side = (s.get("position") or {}).get("side", "")
+        grids.append(_pivot_grid(leg_rg, leg_mg,
+                     f"LEG {side} pivot slopes (book / force-close)  ·  the option's own chart"))
+    return html.Div([top] + grids, style={"marginBottom": "16px"})
 
 
 # ── per-asset P/L booking chart ──────────────────────────────────────────────
