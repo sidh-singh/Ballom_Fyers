@@ -61,7 +61,7 @@ SYMBOLS_JSON = Path(__file__).resolve().parent / "symbols.json"
 # ═══════════════════════════════════════════════════════════════════════════════
 
 SUPERVISOR_TICK      = 30                 # seconds between Loop-1 ticks
-WORKER_IDLE_SLEEP    = 60                 # seconds a worker sleeps when out-of-window
+WORKER_IDLE_SLEEP    = 15                 # idle between worker ticks; the fetch+trade loop paces itself (lower = faster LTP-based booking)
 DAILY_MAINTENANCE_AT = dt_time(0, 10)     # ~00:10 IST → re-auth + re-download CSV
 
 
@@ -184,12 +184,12 @@ FIBO_SEQUENCE_LENGTH   = 25    # fib length (first 2 dropped → 1,2,3,5,8,13,�
 
 # SHA source candles (on the index)
 SHA_TIMEFRAME    = "5"         # Fyers resolution (5-min) ≈ Alcadeias M5
-SHA_CANDLE_COUNT = 300
+SHA_CANDLE_COUNT = 120   # SHA DEMA-20/TEMA-10 warmup + 7-bar lookback (was 300; <~100 leaves the long smoothers unconverged)
 
 # ── RSI (multi-timeframe) ──
 RSI_LENGTH       = 14
 RSI_MA_TYPE      = "RMA"
-RSI_CANDLE_COUNT = 500
+RSI_CANDLE_COUNT = 120   # RMA-14 + MACD-26 + the 20-bar pivot window all converge well within this (was 500)
 RSI_OVERSOLD     = 35
 RSI_OVERBOUGHT   = 65
 RSI_MTF_OVERSOLD   = 35
