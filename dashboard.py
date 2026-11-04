@@ -31,7 +31,7 @@ from plotly.subplots import make_subplots
 
 from constants import (
     STATE_DIR, API_USAGE_FILE, APP_STATUS_FILE, STRATEGY_LOG_DIR,
-    SIGNAL_STATE_FILE, ACCOUNT_STATE_FILE, API_LIMITS,
+    SIGNAL_STATE_FILE, ACCOUNT_STATE_FILE, API_LIMITS, API_LIMITS_PRIME,
     RSI_OVERSOLD, RSI_OVERBOUGHT, now_ist,
     ENTRY_S, BOOK_S, FORCE_CLOSE_S,
     OPEN_SCORE_WEIGHTS, BOOK_SCORE_WEIGHTS, FORCE_CLOSE_SCORE_WEIGHTS,
@@ -133,11 +133,15 @@ def kpi_row():
 # ── API meter ────────────────────────────────────────────────────────────────
 def api_panel():
     usage = (_read(API_USAGE_FILE, {}) or {}).get("categories", {})
+    acct = _read(ACCOUNT_STATE_FILE, {}) or {}
+    plan = str(acct.get("api_plan", "standard")).upper()
+    limits = API_LIMITS_PRIME if plan == "PRIME" else API_LIMITS   # plan-aware thresholds
     cards = []
-    for cat, lim in API_LIMITS.items():
+    for cat, lim in limits.items():
         c = usage.get(cat, {})
         day = c.get("day", {"used": 0, "limit": lim["day"]})
         used, limit = day.get("used", 0), day.get("limit", lim["day"])
+        sec_lim, min_lim = lim["sec"], lim["min"]
         pct = round(100 * used / limit, 1) if limit else 0
         col = C["green"] if pct < 60 else (C["amber"] if pct < 85 else C["red"])
         sec = c.get("sec", {}); mn = c.get("min", {})
@@ -149,12 +153,10 @@ def api_panel():
             html.Div(style={"height": "5px", "borderRadius": "3px", "marginTop": "7px",
                             "background": C["border"], "overflow": "hidden"},
                      children=html.Div(style={"height": "100%", "width": f"{min(pct,100)}%", "background": col})),
-            html.Div(f"{pct}%  ·  {sec.get('used',0)}/{sec.get('limit','-')}·s  "
-                     f"{mn.get('used',0)}/{mn.get('limit','-')}·m",
+            html.Div(f"{pct}%  ·  {sec.get('used',0)}/{sec.get('limit',sec_lim)}·s  "
+                     f"{mn.get('used',0)}/{mn.get('limit',min_lim)}·m",
                      style={"color": C["muted"], "fontSize": "10.5px", "marginTop": "5px"}),
         ], pad="13px 15px", extra={"flex": "1"}))
-    acct = _read(ACCOUNT_STATE_FILE, {}) or {}
-    plan = str(acct.get("api_plan", "standard")).upper()
     renew = acct.get("prime_renewal_days")
     plan_col = C["amber"] if plan == "PRIME" else C["grey"]
     header_bits = [
