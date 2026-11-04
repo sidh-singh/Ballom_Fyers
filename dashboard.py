@@ -35,6 +35,7 @@ from constants import (
     RSI_OVERSOLD, RSI_OVERBOUGHT, now_ist,
     ENTRY_S, BOOK_S, FORCE_CLOSE_S,
     OPEN_SCORE_WEIGHTS, BOOK_SCORE_WEIGHTS, FORCE_CLOSE_SCORE_WEIGHTS,
+    SLOPE_TIMEFRAMES, LEG_SLOPE_TIMEFRAMES,
 )
 
 PROFIT_HISTORY = STATE_DIR / "profit_history.json"
@@ -173,7 +174,14 @@ def api_panel():
 
 # ── per-symbol strategy panel ────────────────────────────────────────────────
 # Timeframes drawn, coarsest→finest (matches the slope-score sections).
-SLOPE_TF_ORDER = ["D1", "H4", "H1", "M15", "M5"]
+# Timeframes drawn in the pivot grids — DERIVED from the live config (index SLOPE_TIMEFRAMES +
+# leg LEG_SLOPE_TIMEFRAMES), so the dashboard always shows exactly whichever timeframes the
+# strategy actually uses and never a stale one. Ordered coarsest→finest.
+_TF_RANK = {"D1": 0, "H6": 1, "H4": 2, "H1": 3, "M30": 4, "M15": 5, "M5": 6, "M1": 7}
+SLOPE_TF_ORDER = sorted(
+    {tf.replace("TIMEFRAME_", "") for tf in (list(SLOPE_TIMEFRAMES) + list(LEG_SLOPE_TIMEFRAMES))},
+    key=lambda k: _TF_RANK.get(k, 99),
+)
 
 
 def _score_axis(weights):
