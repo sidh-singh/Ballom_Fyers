@@ -249,21 +249,23 @@ MACD_SIGNAL = 9                # signal EMA length
 ENTRY_S       = 2              # |open_score| to OPEN. OPEN range ±4 (H4+M5, w1+w1); +2 = one TF fully aligned.
 ENTRY_AGREE_S = 0              # agreement gate: force-close score must not oppose the open (BUY needs fc_score >= +0).
 LADDER_S      = 2              # DCA ladder add blocked once OPEN score is this far adverse (BUY add needs open_score > -2).
-FORCE_CLOSE_S = 12             # force-close when FORCE-CLOSE score is this far AGAINST (range ±20 for 4/3/2/1; BUY close fc_score <= -12).
-BOOK_S        = 1              # profit-book (NETTING only): in profit, book when BOOK score reverses this far (range ±2; BUY book_score <= -1).
+FORCE_CLOSE_S = 1              # force-close on M15 when EITHER RSI or MACD slope reverses against the basket
+                               # (range ±2 for {M15}; BUY close fc_score <= -1, i.e. net-adverse M15 slope).
+BOOK_S        = 2              # profit-book (NETTING only): in profit, book when BOTH M5 slopes (RSI+MACD)
+                               # reverse (range ±2 for {M5}; BUY book_score <= -2).
 
 # ── Per-section timeframe weights (config-driven). Short keys M5/M15/H1/H4/D1. ──
-#   OPEN        -> fresh entry + the DCA ladder-add gate   (grey_fill on)
-#   BOOK        -> profit-book (NETTING only; HEDGING books via the ₹ target)  (grey_fill on)
-#   FORCE_CLOSE -> force-close  (raw signs; the original 4/3/2/1 set == old exit_score)
+#   OPEN        -> fresh entry + the DCA ladder-add gate               : H4 + M5   (grey_fill on)
+#   BOOK        -> profit-book (NETTING only; HEDGING books via the ₹ target) : M5 (grey_fill on; BOOK_S=2 → both reverse)
+#   FORCE_CLOSE -> force-close + the entry agreement-gate veto          : M15      (raw signs; FORCE_CLOSE_S=1 → either reverses)
 OPEN_SCORE_WEIGHTS        = {'H4': 1, 'M5': 1}
-BOOK_SCORE_WEIGHTS        = {'M15': 1}
-FORCE_CLOSE_SCORE_WEIGHTS = {'M15': 4, 'H1': 3, 'H4': 2, 'D1': 1}
+BOOK_SCORE_WEIGHTS        = {'M5': 1}
+FORCE_CLOSE_SCORE_WEIGHTS = {'M15': 1}
 
 # Slope fetch list (auto-derived union of every TF named in any section above),
 # mapped short-key -> 'TIMEFRAME_<key>'. Adding a TF to a section dict is enough.
-# NOTE: D1 is not fetched elsewhere, so it costs +1 Fyers history call per bar; M5/
-# M15/H1/H4 are already fetched for the RSI ladder, so they are free.
+# With the current sections this is {H4, M5, M15} — all already fetched for the RSI
+# ladder, so slopes add no extra history calls (D1/H1 are no longer needed for slopes).
 SLOPE_TIMEFRAMES = ['TIMEFRAME_' + _tf for _tf in dict.fromkeys(
     _k for _d in (OPEN_SCORE_WEIGHTS, BOOK_SCORE_WEIGHTS, FORCE_CLOSE_SCORE_WEIGHTS) for _k in _d
 )]
