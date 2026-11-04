@@ -1,5 +1,10 @@
 # CHANGELOG — `fyers_live` / `fyers_demo`
 
+## 2026-11-04 — Prime renewal date set (annual)
+
+`symbols.json "prime_renewal"` = **2027-11-04** (annual Fyers Prime, bought 2026-11-04). The
+dashboard API panel now shows the days-remaining countdown, turning red in the final 7 days.
+
 ## 2026-11-04 — Fyers Prime enabled: plan-aware limits / brokerage + dashboard fix
 
 - `symbols.json "api_plan"` → **prime**. Fyers does not expose Prime via API, so it is
