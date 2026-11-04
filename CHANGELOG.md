@@ -1,5 +1,19 @@
 # CHANGELOG — `fyers_live` / `fyers_demo`
 
+## 2026-11-04 — Lighter history fetch (120 candles) + faster, clearer worker loop
+
+- **Candle counts cut:** `RSI_CANDLE_COUNT` 500→**120**, `SHA_CANDLE_COUNT` 300→**120**. RMA-14 RSI,
+  MACD's EMA-26, and SHA's DEMA-20/TEMA-10 all converge well within 120 bars, and the latest-pivot
+  slope only reads the last ~20 bars — so 120 is ample while sending ~4× less data per request.
+  (Not 50-60: the slow smoothers — MACD EMA-26 and SHA DEMA-20 — aren't converged by then, which
+  would skew the slope that the OPEN score depends on.) Bonus: keeps H4 under the Fyers 100-day cap.
+- **Worker loop faster + clearer:** `WORKER_IDLE_SLEEP` 60→**15s**. The worker is a SINGLE loop
+  (fetch+trade, then idle) — not two dependent loops; the supervisor (account snapshot/maintenance)
+  is already a separate independent thread. Shorter idle → the LTP-based profit-book reacts in
+  ~15-25s instead of ~70s; per-bar caching keeps the slope fetches bounded. Timing print relabelled
+  `fetch+trade=.. / cycle=..` so it reads as one loop (RSI+MACD branches).
+- Confirmed: the history walk-back already uses the correct closes (index 15:30, commodity 23:30).
+
 ## 2026-11-04 — Fix: H4 / H1 history fetch failed (Fyers 100-day intraday cap)
 
 `fetch_historical_data` walked back 500 bars to build `range_from`; on **H4** (240-min) that spans
