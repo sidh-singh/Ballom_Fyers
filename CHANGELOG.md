@@ -7,6 +7,15 @@ Format: `YYYY-MM-DD` — change — _why_.
 
 ---
 
+## 2026-11-04 — Dashboard: pivot-grid timeframes derived from config (no stale H1/D1)
+
+The RSI/MACD pivot grids used a hardcoded timeframe list (`["D1","H4","H1","M15","M5"]`), so they
+drew a chart for any stale timeframe (e.g. H1/D1 from before the force-close retune) left in a
+signal_state written by older engine code. Now `SLOPE_TF_ORDER` is DERIVED from the live config
+(`SLOPE_TIMEFRAMES` = H4/M15/M5 index, `LEG_SLOPE_TIMEFRAMES` = M5/M15 leg), coarsest→finest, so
+the dashboard always shows exactly the timeframes the strategy uses — and auto-follows future
+config changes. (Restart the engine to re-write the current graphs into signal_state.)
+
 ## 2026-11-04 — Book/force-close read the CE/PE leg chart + anti-vibration + scan band + ₹300
 
 - **Data-source split:** OPEN (entry + ladder-add gate + the entry veto) stays on the INDEX;
