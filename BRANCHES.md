@@ -7,7 +7,7 @@
 > [TRADING_LOGIC.md](TRADING_LOGIC.md); engine internals in
 > [ARCHITECTURE.md](ARCHITECTURE.md); change history in [CHANGELOG.md](CHANGELOG.md);
 > the live go-live checklist in [LIVE_DRYRUN.md](LIVE_DRYRUN.md).
-> **Last updated:** 2026-11-03
+> **Last updated:** 2026-11-04
 
 ---
 
@@ -33,12 +33,12 @@ Two things are **broker facts** you cannot change in code:
 
 | Branch | Mode | Strategy | Profit exit | Symbols (enabled) |
 |---|---|---|---|---|
-| **fyers_live** | 🔴 LIVE (real money) | HAM (SHA + MTF-RSI) | ₹100×units + charges target | NIFTY |
-| **fyers_demo** | 🟢 PAPER (simulated) | HAM (SHA + MTF-RSI) | ₹100×units + charges target | NIFTY, GOLDM, SILVERM |
-| **fyers_netting_live** | 🔴 LIVE | RSI+MACD slope (variant A) | **book-score reversal** above the ₹ floor | NIFTY |
-| **fyers_netting_demo** | 🟢 PAPER | RSI+MACD slope (variant A) | book-score reversal above the ₹ floor | NIFTY, GOLDM, SILVERM |
-| **fyers_hedging_live** | 🔴 LIVE | RSI+MACD slope (variant B) | **₹100×units + charges target** | NIFTY |
-| **fyers_hedging_demo** | 🟢 PAPER | RSI+MACD slope (variant B) | ₹100×units + charges target | NIFTY, GOLDM, SILVERM |
+| **fyers_live** | 🔴 LIVE (real money) | HAM (SHA + MTF-RSI) | ₹300×units NET + charges target | NIFTY |
+| **fyers_demo** | 🟢 PAPER (simulated) | HAM (SHA + MTF-RSI) | ₹300×units NET + charges target | NIFTY, GOLDM, SILVERM |
+| **fyers_netting_live** | 🔴 LIVE | RSI+MACD slope (variant A) | leg **M5 both-reverse** above the ₹300 floor | NIFTY |
+| **fyers_netting_demo** | 🟢 PAPER | RSI+MACD slope (variant A) | leg M5 both-reverse above the ₹300 floor | NIFTY, GOLDM, SILVERM |
+| **fyers_hedging_live** | 🔴 LIVE | RSI+MACD slope (variant B) | **₹300×units NET + charges target** | NIFTY |
+| **fyers_hedging_demo** | 🟢 PAPER | RSI+MACD slope (variant B) | ₹300×units NET + charges target | NIFTY, GOLDM, SILVERM |
 
 **Lineage:** `fyers_live` and `fyers_demo` are the two base branches. The four
 `*_live` / `*_demo` RSI+MACD branches were cut from those bases (live-from-live,
@@ -125,7 +125,9 @@ the Fyers per-minute limit is never breached (a repeated breach = a full-day ban
 - **Fibonacci DCA ladder (max 6 positions):** entry = `1×units×lot`; adds =
   `2,3,5,8,13 × units × lot`, each added when the tier's RSI hits its extreme
   (count 1→M1, 2→M5, 3→M15, 4→H1, 5→H4; BUY at RSI≤35, SELL at RSI≥65).
-- **Tax-aware target:** `close_threshold = ₹(100 × units) + estimated charges`.
+- **Tax-aware target:** `close_threshold = ₹(300 × units NET) + estimated charges`. The
+  **₹300×units is what you keep after taxes** — the estimated charges are stacked *on top*, so
+  taxes never eat into your target (booking is on gross `cycle_pl`; net ≥ ₹300×units).
 
 ### 5.2 HAM — `fyers_live` / `fyers_demo`
 Mean-reversion driven by **Smoothed Heiken-Ashi (SHA-v3)** direction + a
@@ -133,40 +135,44 @@ Mean-reversion driven by **Smoothed Heiken-Ashi (SHA-v3)** direction + a
 - **Entry (flat):** signal-SHA (TEMA-10) and trend-SHA (DEMA-20) both bullish → BUY
   (both bearish → SELL), unless any of M1/M5/M15/M30 RSI is in the opposite extreme.
 - **Ladder:** the shared RSI ladder above; a 6th tier (H6 RSI) force-closes.
-- **Exit:** basket `profit > close_threshold` → CLOSE (the ₹100×units+charges target).
+- **Exit:** basket `profit > close_threshold` → CLOSE (the ₹300×units NET + charges target).
 
 ### 5.3 RSI+MACD slope — the four `*_netting_*` / `*_hedging_*` branches
 **SHA is removed.** Direction comes from the **latest-pivot slopes** of RSI and the
-MACD histogram across **M5/M15/H1/H4/D1**, combined into per-section weighted scores:
+MACD histogram, combined into per-section weighted scores:
 
 ```
 score = Σ_tf  weight_tf · (rsi_sign_tf + macd_sign_tf)      each sign ∈ {−1, 0, +1}
 ```
 
-| Section | Timeframes · weights | Threshold | Drives |
-|---|---|---|---|
-| OPEN | H4:1, M5:1 (range ±4) | `ENTRY_S=2`, `LADDER_S=2` | entry + ladder-add gate |
-| BOOK | M15:1 (range ±2) | `BOOK_S=1` | profit book (variant A only) |
-| FORCE_CLOSE | M15:4, H1:3, H4:2, D1:1 (range ±20) | `FORCE_CLOSE_S=12` | force-close |
+**Two data sources (important):** the OPEN score (entry + the ladder-add gate + the entry veto)
+reads the **main index** (e.g. NIFTY-INDEX); the **BOOK + FORCE-CLOSE exits read the ACTIVE CE/PE
+leg's OWN option candles**, so exits follow the premium you actually hold, not the index.
 
-- **Entry (flat), agreement gate:** BUY when `open_score ≥ +2` **and** `fc_score` not
-  opposing; SELL mirror; else WAIT (prevents open-then-instant-close chop). A fresh
-  entry is blocked for **300 s after any close** (re-entry cooldown).
-- **Force-close:** `fc_score ≤ −12` (BUY) closes the basket.
-- **Ladder:** the shared RSI ladder, gated so it only averages in while OPEN isn't
-  strongly adverse.
+| Section | Weights | Threshold | Source | Drives |
+|---|---|---|---|---|
+| OPEN | H4:1, M5:1 (±4) | `ENTRY_S=2`, `LADDER_S=2` | **index** | entry + ladder-add gate |
+| BOOK | M5:1 (±2) | `BOOK_S=2` | **leg** | profit book (variant A) — **both** M5 slopes reverse |
+| FORCE_CLOSE | M15:1 (±2) | `FORCE_CLOSE_S=1` | **leg** (exit) / **index** (entry gate) | force-close — **either** M15 slope reverses |
+
+- **Entry (flat), agreement gate:** BUY when the index `open_score ≥ +2` **and** the index
+  force-close score isn't opposing; SELL mirror; else WAIT. Blocked for **300 s after any close**
+  (`REENTRY_COOLDOWN_SECONDS`).
+- **Anti-vibration:** after an entry, BOTH book + force-close are suppressed for **180 s**
+  (`MIN_HOLD_SECONDS`) so a basket can never open-then-close on a stale leg pivot.
+- **Force-close:** the leg's M15 `fc_score ≤ −1` (either the RSI or MACD slope reversing) closes it.
+- **Ladder:** the shared RSI ladder, gated on the index OPEN score.
 - **Profit book — the ONLY difference between the two variants:**
-  - **Variant A = NETTING** (`fyers_netting_*`, from Alcadeias
-    `rsimacd_btcusd1_wd_exp_h`): book when `cycle_pl > close_threshold` **AND** the
-    M15 BOOK score reverses. Winners run until momentum turns; never books a net loss.
-  - **Variant B = HEDGING** (`fyers_hedging_*`, from Alcadeias
-    `rsimacd_h6_btcusd1_wd_exp_h`): book the moment `cycle_pl > close_threshold`. The
-    fixed tax-aware ₹ target that scales with the balance tier (= the HAM rule).
+  - **Variant A = NETTING** (`fyers_netting_*`, from Alcadeias `rsimacd_btcusd1_wd_exp_h`): book
+    when `cycle_pl > close_threshold` (net ≥ ₹300×units) **AND both** the leg's M5 slopes reverse.
+    Winners run until M5 momentum turns; never books a net loss.
+  - **Variant B = HEDGING** (`fyers_hedging_*`, from Alcadeias `rsimacd_h6_btcusd1_wd_exp_h`):
+    book the moment `cycle_pl > close_threshold` (the fixed ₹300×units+tax target). Force-close
+    still reads the leg.
 
-> **Note on the names:** here "netting" / "hedging" label the *profit-exit flavour*
-> ported from the two Alcadeias branches — **both** still run on the same Fyers
-> netting account (buy-only CE/PE). The source branch for each is recorded at the top
-> of that branch's TRADING_LOGIC.md.
+> **Names:** "netting"/"hedging" label the *profit-exit flavour* from the two Alcadeias source
+> branches — **both** run on the same Fyers netting account (buy-only CE/PE). Full detail per
+> branch is in its `TRADING_LOGIC.md`.
 
 ---
 
@@ -195,9 +201,41 @@ Plan is **not** exposed by the Fyers API — it is set from config
 stay affordable. Prime also lowers brokerage ₹20→₹15 (taxes unchanged) and the
 dashboard shows a plan badge + renewal countdown (renewal date is config, not API).
 
+**Current:** `api_plan: "prime"` on all branches (Fyers Prime bought 2026-11-04, annual →
+`prime_renewal: "2027-11-04"`). Fyers exposes **no** account-type / subscription field in any API
+(`get_profile` returns identity + DDPI/MTF flags only) — so Prime is, and must be, config-driven.
+
 ---
 
-## 8. Environment & how to run
+## 8. Operational & tuning notes (data fetch, loop cadence)
+
+**Candle counts (`constants.py`).** `RSI_CANDLE_COUNT = 120`, `SHA_CANDLE_COUNT = 120`. Short on
+purpose: RMA-14 RSI, MACD's EMA-26 and SHA's DEMA-20/TEMA-10 all converge well within 120 bars, and
+the latest-pivot slope only reads the last ~20 bars — so 120 is ample at ~4× less payload than the
+old 500/300. **Don't drop to ~50:** the slow smoothers (MACD EMA-26, SHA DEMA-20) aren't converged
+by then, which skews the slope the OPEN score depends on.
+
+**Fyers history is capped at 100 days per request** for intraday resolutions (1m–240m; 366 for
+daily, 30 trading-days for seconds). Walking back 500 H4 bars used to span ~200 days (MCX) / ~440
+(index) and the API rejected it ("H4 failing"). `fetch_historical_data` now **clamps the window**
+to just under the cap (95d intraday / 360d daily / 28d seconds); the 120-candle count also keeps H4
+naturally under it. For spans longer than 100 days Fyers' own answer is paginated 100-day windows —
+not needed here.
+
+**History walk-back uses the right market close per asset:** **index 15:30** (3:30 PM NSE),
+**commodity 23:30** (11:30 PM MCX; 23:55 in summer DST — minor). Picked by `market_type`.
+
+**Worker loop = ONE loop per symbol, not two.** Each worker thread does *fetch + trade* (~10 s of
+work on a bar boundary, ~1-2 s when cached) then idles `WORKER_IDLE_SLEEP = 15 s` → a ~15-25 s
+cycle. The timing print reads `[NIFTY] fetch+trade=.. / cycle=..` (one loop; cycle = work + idle).
+The **second, genuinely independent loop is the supervisor thread** (`application.py`: account
+snapshot, maintenance, plan). A short idle makes the **LTP-based profit-book react in ~15-25 s**
+(vs ~70 s before); entry/slope signals are bar-based so they're unaffected. Tunable via
+`WORKER_IDLE_SLEEP`.
+
+---
+
+## 9. Environment & how to run
 - **Python 3.11 only** (hardcoded server path `C:\Users\Administrator\AppData\Local\
   Programs\Python\Python311`). 3.13 fails to build a dependency (`aiohttp`, no MSVC).
 - **Timezone:** all market logic is **IST** (`now_ist` / `today_ist` in constants).
@@ -220,7 +258,7 @@ LIVE vs PAPER and HAM vs RSI+MACD.
 
 ---
 
-## 9. Safety notes
+## 10. Safety notes
 - **`*_live` branches place real orders.** Always paper-test on the `*_demo` sibling
   and run `dry_run.py` before a live session.
 - **Credentials (TOTP secret, PIN, API key/secret) are hardcoded in `fyers_auth.py`**
@@ -233,7 +271,7 @@ LIVE vs PAPER and HAM vs RSI+MACD.
 
 ---
 
-## 10. Git topology & keeping docs current
+## 11. Git topology & keeping docs current
 ```
 fyers_live ──┬─ fyers_netting_live ── (core → strategy A → doc)
              └─ fyers_hedging_live ── (core → strategy B → doc)
