@@ -38,9 +38,12 @@ scores** that drive entry, force-close and the profit book. A mean-reversion
 - **MACD** histogram is unbounded; the **signal line's sign picks the side** —
   `signal > 0` → read the HIGH side, `signal < 0` → the LOW side.
 
-Slopes are computed on the **index** for `SLOPE_TIMEFRAMES` = **M5, M15, H4**
-(the de-duplicated union of the three sections' timeframes — all already pulled for the
-RSI ladder, so slopes add no extra history calls; D1/H1 are no longer used for slopes).
+**Two slope sources (2026-11-04).** OPEN (entry + the ladder-add gate + the entry
+agreement-gate veto) reads the **main index** (`SLOPE_TIMEFRAMES` = M5, M15, H4). The
+**BOOK and FORCE-CLOSE exits** read the **active CE/PE leg's OWN option candles**
+(`LEG_SLOPE_TIMEFRAMES` = M5, M15) — so profit-booking and force-close follow the premium
+you actually hold, not the index. Anti-vibration: after an entry, both exits are suppressed
+for `MIN_HOLD_SECONDS` (180 s) so a basket can never open-then-close on a stale leg pivot.
 
 ### 1.2 Per-section weighted scores (`strategy._weighted_score`)
 Each decision **section** has its own `{timeframe: weight}` map; its score is the RAW
@@ -50,11 +53,11 @@ weighted sum of the latest-pivot signs, range **±(2·Σ|weight|)**:
 score = Σ_tf  weight_tf · (rsi_sign_tf + macd_sign_tf)      each sign ∈ {−1, 0, +1}
 ```
 
-| Section | Timeframes · weights (`constants.py`) | Range | Threshold | Used for |
-|---|---|---|---|---|
-| **OPEN** | `{H4:1, M5:1}` | ±4 | `ENTRY_S=2`, `LADDER_S=2` | fresh entry + ladder-add gate |
-| **BOOK** | `{M5:1}` | ±2 | `BOOK_S=2` | profit book (variant A) — **both** M5 slopes reverse |
-| **FORCE_CLOSE** | `{M15:1}` | ±2 | `FORCE_CLOSE_S=1` | force-close + entry agreement gate — **either** M15 slope reverses |
+| Section | Weights | Range | Threshold | Source | Used for |
+|---|---|---|---|---|---|
+| **OPEN** | `{H4:1, M5:1}` | ±4 | `ENTRY_S=2`, `LADDER_S=2` | **index** | fresh entry + ladder-add gate |
+| **BOOK** | `{M5:1}` | ±2 | `BOOK_S=2` | **leg** | profit book — **both** M5 slopes reverse |
+| **FORCE_CLOSE** | `{M15:1}` | ±2 | `FORCE_CLOSE_S=1` | **leg** (exit) / **index** (entry gate) | force-close — **either** M15 slope reverses |
 
 **grey_fill** (OPEN + BOOK only): if exactly one of a timeframe's two signs is 0
 (its RSI or MACD is at a peak/plateau — pivot undefined), the grey sign borrows the
@@ -110,19 +113,18 @@ Close the whole basket when it is **in profit above a floor AND momentum reverse
 buy_pp  = (cycle_pl > close_threshold)  AND  (book_score ≤ −BOOK_S)   → CLOSE_BUY ('book')
 ```
 
-- `close_threshold = ₹(HEDGE_PER_UNIT × units) + charges` with **`HEDGE_PER_UNIT=100`**
-  → the floor is **+₹100 per unit plus estimated taxes/charges** (§4), so a book only
-  fires once the basket is **net-positive by ≥ ₹100×units** AND the BOOK score has
-  reversed: with `BOOK={M5:1}` + `BOOK_S=2`, that means **both** the M5 RSI and MACD
-  slopes have turned against the basket (book_score ≤ −2).
-- This is the Alcadeias `profit > times·PROFIT_PROTECT_USD_PER_UNIT AND book_score
-  reversal`, with the `$1/unit` floor replaced by the tax-aware Fyers floor so the
-  booked trade can never net a loss. Winners run until the M5 slope fully reverses.
+- `close_threshold = ₹(HEDGE_PER_UNIT × units) + charges` with **`HEDGE_PER_UNIT=300`**
+  → the floor is **+₹300 NET per unit plus estimated taxes/charges** (§4; ~10–15 NIFTY points
+  on 1 lot), so a book only fires once the basket is **net-positive by ≥ ₹300×units** AND the
+  BOOK score has reversed **on the LEG**: with `BOOK={M5:1}` + `BOOK_S=2`, that means **both**
+  the leg's M5 RSI and MACD slopes have turned against the basket (book_score ≤ −2).
+- `book_score`/`fc_score` are read on the **active CE/PE option's own M5/M15 candles** (not the
+  index), and both exits are suppressed for the first `MIN_HOLD_SECONDS` after entry.
 - Checked **before** the force-close, so in profit a book always beats a capitulation.
 
 > **Variant B (`fyers_hedging_*`)** drops the `book_score` condition and books the
-> moment `cycle_pl > close_threshold` (the fixed ₹100×units+charges target). That is
-> the only difference between the two branch pairs.
+> moment `cycle_pl > close_threshold` (the fixed ₹300×units+charges target). Force-close still
+> reads the leg. That is the only difference between the two branch pairs.
 
 ---
 
@@ -149,6 +151,15 @@ is what the strategy sees as `total_profit`, and the close books
 `symbols.json`). Units are fixed at entry and drive both the Fibo lot ladder and the
 `close_threshold`/book floor. The per-contract lot comes from the downloaded
 NSE/MCX CSV.
+
+**Strike / expiry scan (`scanner.py`).** A fresh basket picks the best CE + PE within a
+**premium band** `SCAN_MIN_PREMIUM_PER_LOT`…`SCAN_MAX_PREMIUM_PER_LOT` per lot (₹10k–₹30k)
+so we hold near-ATM options with real value/history (not cheap far-OTM); a **round-strike**
+bonus (`SCAN_ROUND_STRIKE_STEP` = ₹1000 → NIFTY 24000/25000/26000) favours the liquid,
+long-history strikes; and the **expiry window** is `SCAN_MIN_DTE`…`SCAN_MAX_DTE` = **7–31 DTE**
+(≥1 week, ≤1 month) with a "nearest ≥ MIN" fallback so gold/silver's monthly still resolves.
+All are per-symbol overridable (`min_premium_per_lot` / `max_premium_per_lot` /
+`round_strike_step`); commodities set `min_premium_per_lot: 0` until their premiums are tuned.
 
 ---
 
