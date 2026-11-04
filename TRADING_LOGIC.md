@@ -39,9 +39,9 @@ extremes) averages into an open basket, which is booked at a fixed ₹ target.
 - **MACD** histogram is unbounded; the **signal line's sign picks the side** —
   `signal > 0` → read the HIGH side, `signal < 0` → the LOW side.
 
-Slopes are computed on the **index** for `SLOPE_TIMEFRAMES` = **M5, M15, H1, H4, D1**
-(the de-duplicated union of the sections' timeframes; D1 is the only extra fetch —
-M5/M15/H1/H4 are already pulled for the RSI ladder).
+Slopes are computed on the **index** for `SLOPE_TIMEFRAMES` = **M5, M15, H4**
+(the de-duplicated union of the sections' timeframes — all already pulled for the RSI
+ladder, so slopes add no extra history calls; D1/H1 are no longer used for slopes).
 
 ### 1.2 Per-section weighted scores (`strategy._weighted_score`)
 Each decision **section** has its own `{timeframe: weight}` map; its score is the RAW
@@ -54,7 +54,7 @@ score = Σ_tf  weight_tf · (rsi_sign_tf + macd_sign_tf)      each sign ∈ {−
 | Section | Timeframes · weights (`constants.py`) | Range | Threshold | Used for |
 |---|---|---|---|---|
 | **OPEN** | `{H4:1, M5:1}` | ±4 | `ENTRY_S=2`, `LADDER_S=2` | fresh entry + ladder-add gate |
-| **FORCE_CLOSE** | `{M15:4, H1:3, H4:2, D1:1}` | ±20 | `FORCE_CLOSE_S=12` | force-close |
+| **FORCE_CLOSE** | `{M15:1}` | ±2 | `FORCE_CLOSE_S=1` | force-close + entry agreement gate — **either** M15 slope reverses |
 
 (There is **no BOOK section** in variant B — the profit exit is the fixed ₹ target,
 not a score. `BOOK_SCORE_WEIGHTS` is still defined in `constants.py` for parity but
@@ -65,6 +65,10 @@ MACD is at a peak/plateau — pivot undefined), the grey sign borrows the other
 indicator's direction, so a TF clear on one indicator counts as a **full** aligned
 vote (±2·w) instead of half. Both grey → the TF stays 0. FORCE_CLOSE uses **raw**
 signs (no grey_fill).
+
+> **FORCE_CLOSE = either.** With `FORCE_CLOSE={M15:1}` and `FORCE_CLOSE_S=1`, a force-close
+> fires at M15 score ±1 — i.e. **either** the M15 RSI or MACD slope turning the net M15 slope
+> adverse to the basket. The same M15 score is the entry agreement-gate veto.
 
 ### 1.3 Signals
 `DO_NOTHING, BUY, SELL, CLOSE_BUY, CLOSE_SELL, BUY_MORE, SELL_MORE`.
