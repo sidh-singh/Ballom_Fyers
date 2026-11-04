@@ -156,8 +156,8 @@ class Strategy:
     def calculate_signal(self, source_df,
                          buy_positions, sell_positions, times,
                          close_threshold=2,
-                         rsi_value=None, rsi_mtf=None, slopes=None,
-                         entry_allowed=True):
+                         rsi_value=None, rsi_mtf=None, slopes=None, leg_slopes=None,
+                         entry_allowed=True, exit_allowed=True):
         """
         RSI+MACD slope strategy (NETTING / book-score profit exit). Three per-section weighted
         scores, each from its OWN configurable timeframe set (constants OPEN/BOOK/FORCE_CLOSE
@@ -211,29 +211,37 @@ class Strategy:
 
         slope_direction = self._slope_direction(slopes)   # structural read (dashboard/compare only)
 
-        # ── Per-section RAW weighted slope scores ──
-        open_score = self._weighted_score(slopes, OPEN_SCORE_WEIGHTS, grey_fill=True)   # entry + ladder gate
-        book_score = self._weighted_score(slopes, BOOK_SCORE_WEIGHTS, grey_fill=True)   # profit-book (this variant)
-        fc_score = self._weighted_score(slopes, FORCE_CLOSE_SCORE_WEIGHTS)              # force-close (raw signs)
+        in_position = (buy_count + sell_count) > 0
 
-        # Fresh-entry direction (agreement gate).
-        entry_direction = self._entry_direction(open_score, fc_score)
+        # ── Per-section RAW weighted slope scores ──
+        # OPEN (entry + ladder-add gate) + the entry agreement-gate veto are read on the INDEX.
+        open_score = self._weighted_score(slopes, OPEN_SCORE_WEIGHTS, grey_fill=True)
+        fc_gate = self._weighted_score(slopes, FORCE_CLOSE_SCORE_WEIGHTS)   # index FC → entry veto
+        # BOOK + FORCE-CLOSE exits are read on the ACTIVE LEG's own option chart (leg_slopes).
+        book_score = self._weighted_score(leg_slopes, BOOK_SCORE_WEIGHTS, grey_fill=True)
+        fc_leg = self._weighted_score(leg_slopes, FORCE_CLOSE_SCORE_WEIGHTS)
+        # Dashboard FC meter shows the leg FC when in a basket, else the index entry-gate FC.
+        fc_score = fc_leg if in_position else fc_gate
+
+        # Fresh-entry direction (agreement gate, on the index).
+        entry_direction = self._entry_direction(open_score, fc_gate)
         open_wants = 'BUY' if open_score >= ENTRY_S else ('SELL' if open_score <= -ENTRY_S else None)
         entry_chop_block = bool(open_wants and entry_direction is None)
 
-        # DCA ladder-add gate: average in only while the OPEN score is not strongly adverse.
+        # DCA ladder-add gate: average in only while the OPEN (index) score is not strongly adverse.
         buy_add_ok = open_score > -LADDER_S
         sell_add_ok = open_score < LADDER_S
 
-        # Force-close (EXIT): close when the FORCE-CLOSE score has moved far enough AGAINST.
-        buy_fc = fc_score <= -FORCE_CLOSE_S
-        sell_fc = fc_score >= FORCE_CLOSE_S
+        # Force-close (EXIT, on the LEG): close when the leg FORCE-CLOSE score is far enough AGAINST.
+        # Suppressed during the post-entry min-hold (exit_allowed) so we never open-then-close.
+        buy_fc = exit_allowed and (fc_leg <= -FORCE_CLOSE_S)
+        sell_fc = exit_allowed and (fc_leg >= FORCE_CLOSE_S)
 
-        # Profit-book (variant A): once profit clears the tax-aware floor AND the BOOK score
-        # reverses. Checked BEFORE the force-close (in profit a book beats a capitulation).
+        # Profit-book (variant A, on the LEG): once profit clears the tax-aware floor AND the leg
+        # BOOK score reverses. Checked BEFORE the force-close. Also min-hold gated.
         profit_protect_min = close_threshold
-        buy_pp = (buy_profit > profit_protect_min) and (book_score <= -BOOK_S)
-        sell_pp = (sell_profit > profit_protect_min) and (book_score >= BOOK_S)
+        buy_pp = exit_allowed and (buy_profit > profit_protect_min) and (book_score <= -BOOK_S)
+        sell_pp = exit_allowed and (sell_profit > profit_protect_min) and (book_score >= BOOK_S)
 
         if buy_count == 0 and sell_count == 0:
             # Fresh entry (single position; opens on the weighted score), cooldown-gated.
@@ -286,6 +294,7 @@ class Strategy:
             'rsi_value': round(current_rsi, 2),
             'rsi_mtf': rsi_mtf or {},
             'slopes': slopes or {},
+            'leg_slopes': leg_slopes or {},
             'slope_direction': slope_direction or 'WAIT',
             'entry_direction': entry_direction or 'WAIT',
             'open_score': round(open_score, 1),
@@ -294,6 +303,7 @@ class Strategy:
             'buy_add_ok': bool(buy_add_ok),
             'sell_add_ok': bool(sell_add_ok),
             'entry_allowed': bool(entry_allowed),
+            'exit_allowed': bool(exit_allowed),
             'entry_chop_block': bool(entry_chop_block),
             'exit_reason': exit_reason,
             'variant': 'netting',
