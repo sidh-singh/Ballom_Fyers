@@ -31,8 +31,9 @@ from constants import (
     RSI_LENGTH, RSI_MA_TYPE, RSI_CANDLE_COUNT,
     RSI_DCA_LADDER_TIMEFRAMES, TIMEFRAME_TO_FYERS_RES,
     MACD_FAST, MACD_SLOW, MACD_SIGNAL,
-    SLOPE_TIMEFRAMES, PEAK_LOOKBACK, PIVOT_WIDTH, RSI_PEAK_OB, RSI_PEAK_OS, RSI_GRAPH_BARS,
-    REENTRY_COOLDOWN_SECONDS,
+    SLOPE_TIMEFRAMES, LEG_SLOPE_TIMEFRAMES,
+    PEAK_LOOKBACK, PIVOT_WIDTH, RSI_PEAK_OB, RSI_PEAK_OS, RSI_GRAPH_BARS,
+    REENTRY_COOLDOWN_SECONDS, MIN_HOLD_SECONDS,
     STEP_UP_BALANCE, UNIT_MAX_LIMIT, HEDGE_PER_UNIT,
     estimate_trade_charges,
 )
@@ -73,8 +74,9 @@ class SymbolWorker(threading.Thread):
         self.units = 1
         self.active: dict | None = None     # {"side": "CE"|"PE", "symbol": leg_sym}
         self.pending_close = False
-        self._frame_cache: dict = {}        # tf -> (monotonic_fetch_time, ohlc_df) — per bar
+        self._frame_cache: dict = {}        # (symbol, tf) -> (monotonic_fetch_time, ohlc_df) — per bar
         self._last_close_time = 0.0         # monotonic of last close → post-close re-entry cooldown
+        self._entry_mono = None             # monotonic at first entry → post-entry min-hold (anti-vibration)
         self._pair_ttl = 300                # display-scan cache TTL (s)
         self._resolved_on = None            # IST date the commodity future was last resolved
         self._last_pair = None              # pair of the open basket (for display)
@@ -112,22 +114,36 @@ class SymbolWorker(threading.Thread):
                 return
 
         buy_pos, sell_pos, close_threshold, count = self._leg_state_and_threshold()
-        rsi_mtf, slopes, rsi_graphs, macd_graphs = self._slopes_and_rsi()
-        source_df = self._tf_frame("TIMEFRAME_M5")   # price feed / liveness (strategy metadata)
+        rsi_mtf, slopes, rsi_graphs, macd_graphs = self._slopes_and_rsi()          # INDEX (open)
+        leg_slopes, leg_rsi_graphs, leg_macd_graphs = self._leg_slopes()           # LEG (book/fc)
+        source_df = self._frame(self._active_underlying, "TIMEFRAME_M5")  # price feed / liveness
         if source_df is None or len(source_df) == 0:
             logger.info("[%s] insufficient index candles", self.symbol)
             return
 
         entry_allowed = (monotonic() - self._last_close_time) >= REENTRY_COOLDOWN_SECONDS
+        # Post-entry min-hold: suppress book + force-close until the basket is this old, so it
+        # can't open-then-close on a stale leg pivot (anti-vibration). No position → always True.
+        if self._entry_mono is None:
+            exit_allowed, min_hold_left = True, 0
+        else:
+            held = monotonic() - self._entry_mono
+            exit_allowed = held >= MIN_HOLD_SECONDS
+            min_hold_left = max(0, int(MIN_HOLD_SECONDS - held))
         buy_signal, sell_signal, ad = self.strategy.calculate_signal(
             source_df, buy_pos, sell_pos, self.units,
             close_threshold=close_threshold,
             rsi_value=rsi_mtf.get("TIMEFRAME_M1", 50.0), rsi_mtf=rsi_mtf,
-            slopes=slopes, entry_allowed=entry_allowed,
+            slopes=slopes, leg_slopes=leg_slopes,
+            entry_allowed=entry_allowed, exit_allowed=exit_allowed,
         )
         ad["rsi_graphs"] = rsi_graphs
         ad["macd_graphs"] = macd_graphs
+        ad["leg_rsi_graphs"] = leg_rsi_graphs
+        ad["leg_macd_graphs"] = leg_macd_graphs
         ad["close_threshold"] = close_threshold
+        ad["exit_allowed"] = exit_allowed
+        ad["min_hold_left"] = min_hold_left
         self._execute(buy_signal, sell_signal)
         try:
             write_signal_state(self.symbol,
@@ -196,6 +212,7 @@ class SymbolWorker(threading.Thread):
         fill = self._fill_price(leg_sym, premium)
         self.ctx.tracker.record_entry(leg_sym, qty, fill, side=1 if side == "CE" else -1)
         self.active = {"side": side, "symbol": leg_sym}
+        self._entry_mono = monotonic()                # start the post-entry min-hold
         log_strategy_event(self.symbol, side, "ENTRY", qty=qty,
                            details=f"{leg_sym} units={self.units} fill~{fill}")
 
@@ -249,6 +266,7 @@ class SymbolWorker(threading.Thread):
         self.active = None
         self.pending_close = False
         self._last_pair = None
+        self._entry_mono = None               # clear the basket age
         self._last_close_time = monotonic()   # start the post-close re-entry cooldown
 
     def _fill_price(self, leg_sym: str, fallback_ltp: float) -> float:
@@ -259,14 +277,14 @@ class SymbolWorker(threading.Thread):
         return float(fallback_ltp or 0.0)
 
     # ── data helpers ────────────────────────────────────────────────────────
-    def _tf_frame(self, tf: str):
-        """Cached per-bar OHLC frame for one timeframe (reused for RSI + MACD slopes).
-        Refetching 500 candles every 60s tick is wasted work — this refreshes at most
-        once per bar (TTL = bar duration), so the DATA budget is respected while every
-        slope TF stays current. H6 (360) isn't a native Fyers resolution → resample from
-        60-min; D1 maps to Fyers 'D'."""
+    def _frame(self, symbol: str, tf: str):
+        """Cached per-bar OHLC frame for (symbol, timeframe). Used for the INDEX slopes and —
+        once a basket is open — the active CE/PE LEG's own slopes. Refreshes at most once per
+        bar (TTL = bar duration) so the DATA budget is respected. H6 (360) isn't a native Fyers
+        resolution → resample from 60-min; D1 maps to Fyers 'D'."""
         now = monotonic()
-        cached = self._frame_cache.get(tf)
+        key = (symbol, tf)
+        cached = self._frame_cache.get(key)
         ttl = _RES_SECONDS.get(tf, 300)
         if cached and (now - cached[0]) < ttl:
             return cached[1]
@@ -276,62 +294,89 @@ class SymbolWorker(threading.Thread):
             res, resample = "60", "6h"
         try:
             df = self.ctx.api.fetch_historical_data(
-                self._active_underlying, res, RSI_CANDLE_COUNT, market_type=self.asset_type)
+                symbol, res, RSI_CANDLE_COUNT, market_type=self.asset_type)
             if resample is not None:
                 df = self._resample(df, resample)
         except Exception as e:
-            logger.warning("[%s] %s frame fetch failed: %s", self.symbol, tf, e)
+            logger.warning("[%s] %s %s frame fetch failed: %s", self.symbol, symbol, tf, e)
             df = cached[1] if cached else None
-        self._frame_cache[tf] = (now, df)
+        self._frame_cache[key] = (now, df)
         return df
 
+    def _slope_and_graph(self, df):
+        """RSI + MACD-histogram latest-pivot slopes + the dashboard mini-chart payloads for one
+        OHLC frame (index or leg). The MACD pivot side is chosen by the signal line (signal>0→
+        'high', <0→'low'). Returns (rsi_slope, macd_slope, rsi_graph, macd_graph)."""
+        rsi_s = self.indicator.calculate_rsi(df["Close"], RSI_LENGTH, RSI_MA_TYPE)
+        macd_df = self.indicator.calculate_macd(df["Close"], MACD_FAST, MACD_SLOW, MACD_SIGNAL)
+        rsi_slope = self.indicator.latest_pivot_slope(
+            rsi_s, lookback=PEAK_LOOKBACK, width=PIVOT_WIDTH, ob_level=RSI_PEAK_OB, os_level=RSI_PEAK_OS)
+        sig = float(macd_df["signal"].iloc[-1]) if len(macd_df) else 0.0
+        macd_side = "high" if sig > 0 else ("low" if sig < 0 else None)
+        macd_slope = self.indicator.latest_pivot_slope(
+            macd_df["hist"], lookback=PEAK_LOOKBACK, width=PIVOT_WIDTH, side=macd_side)
+        hist = macd_df["hist"]
+        rsi_graph = {
+            "series": [round(float(v), 2) for v in rsi_s.tail(RSI_GRAPH_BARS).tolist()],
+            "current": round(float(rsi_s.iloc[-1]), 2),
+            "pivot_bars_ago": rsi_slope.get("bars_ago"),
+            "pivot_value": (round(rsi_slope["value"], 2) if rsi_slope.get("value") is not None else None),
+            "sign": rsi_slope.get("sign", 0),
+            "bands": [RSI_PEAK_OS, RSI_PEAK_OB], "clamp": [0, 100], "name": "RSI",
+        }
+        macd_graph = {
+            "series": [round(float(v), 5) for v in hist.tail(RSI_GRAPH_BARS).tolist()],
+            "current": round(float(hist.iloc[-1]), 5),
+            "pivot_bars_ago": macd_slope.get("bars_ago"),
+            "pivot_value": (round(macd_slope["value"], 5) if macd_slope.get("value") is not None else None),
+            "sign": macd_slope.get("sign", 0),
+            "bands": [0], "clamp": None, "name": "MACD",
+        }
+        return rsi_slope, macd_slope, rsi_graph, macd_graph
+
     def _slopes_and_rsi(self):
-        """Per-TF RSI (ladder tiers) + RSI/MACD-histogram latest-pivot slopes + the dashboard
-        mini-chart series (SLOPE_TIMEFRAMES). One fetch per timeframe (cached per bar), reused
-        for all three — mirrors Alcadeias app.py. The MACD pivot side is chosen by the signal
-        line (signal>0→'high', <0→'low'). Returns (rsi_mtf, slopes, rsi_graphs, macd_graphs)."""
+        """INDEX per-TF RSI (ladder tiers) + RSI/MACD latest-pivot slopes + dashboard series,
+        computed on the MAIN INDEX (drives OPEN entry + the ladder-add gate + the entry veto).
+        One fetch per timeframe, cached per bar. Returns (rsi_mtf, slopes, rsi_graphs, macd_graphs)."""
         needed = []
         for tf in (["TIMEFRAME_M1"] + list(RSI_DCA_LADDER_TIMEFRAMES) + list(SLOPE_TIMEFRAMES)):
             if tf not in needed:
                 needed.append(tf)
         rsi_mtf, slopes, rsi_graphs, macd_graphs = {}, {}, {}, {}
         for tf in needed:
-            df = self._tf_frame(tf)
+            df = self._frame(self._active_underlying, tf)
             if df is None or len(df) == 0:
                 rsi_mtf[tf] = 50.0
                 continue
             rsi_s = self.indicator.calculate_rsi(df["Close"], RSI_LENGTH, RSI_MA_TYPE)
             rsi_mtf[tf] = float(rsi_s.iloc[-1]) if len(rsi_s) else 50.0
             if tf in SLOPE_TIMEFRAMES:
-                macd_df = self.indicator.calculate_macd(df["Close"], MACD_FAST, MACD_SLOW, MACD_SIGNAL)
-                rsi_slope = self.indicator.latest_pivot_slope(
-                    rsi_s, lookback=PEAK_LOOKBACK, width=PIVOT_WIDTH,
-                    ob_level=RSI_PEAK_OB, os_level=RSI_PEAK_OS)
-                sig = float(macd_df["signal"].iloc[-1]) if len(macd_df) else 0.0
-                macd_side = "high" if sig > 0 else ("low" if sig < 0 else None)
-                macd_slope = self.indicator.latest_pivot_slope(
-                    macd_df["hist"], lookback=PEAK_LOOKBACK, width=PIVOT_WIDTH, side=macd_side)
+                rsl, msl, rg, mg = self._slope_and_graph(df)
                 key = tf.replace("TIMEFRAME_", "")
-                slopes[key] = {"rsi": rsi_slope, "macd": macd_slope}
-                hist = macd_df["hist"]
-                # Dashboard pivot mini-charts: recent series + latest pivot + slope sign.
-                rsi_graphs[key] = {
-                    "series": [round(float(v), 2) for v in rsi_s.tail(RSI_GRAPH_BARS).tolist()],
-                    "current": round(float(rsi_s.iloc[-1]), 2),
-                    "pivot_bars_ago": rsi_slope.get("bars_ago"),
-                    "pivot_value": (round(rsi_slope["value"], 2) if rsi_slope.get("value") is not None else None),
-                    "sign": rsi_slope.get("sign", 0),
-                    "bands": [RSI_PEAK_OS, RSI_PEAK_OB], "clamp": [0, 100], "name": "RSI",
-                }
-                macd_graphs[key] = {
-                    "series": [round(float(v), 5) for v in hist.tail(RSI_GRAPH_BARS).tolist()],
-                    "current": round(float(hist.iloc[-1]), 5),
-                    "pivot_bars_ago": macd_slope.get("bars_ago"),
-                    "pivot_value": (round(macd_slope["value"], 5) if macd_slope.get("value") is not None else None),
-                    "sign": macd_slope.get("sign", 0),
-                    "bands": [0], "clamp": None, "name": "MACD",
-                }
+                slopes[key] = {"rsi": rsl, "macd": msl}
+                rsi_graphs[key] = rg
+                macd_graphs[key] = mg
         return rsi_mtf, slopes, rsi_graphs, macd_graphs
+
+    def _leg_slopes(self):
+        """LEG slopes — RSI/MACD latest-pivot slopes on the ACTIVE CE/PE option's OWN candles
+        (book = M5, force-close = M15), plus the leg mini-chart series. Empty when flat. Each
+        (leg, tf) frame is cached per bar, so this adds a couple of history calls per bar while a
+        basket is open. Returns (leg_slopes, leg_rsi_graphs, leg_macd_graphs)."""
+        if not self.active:
+            return {}, {}, {}
+        leg_sym = self.active["symbol"]
+        slopes, rsi_graphs, macd_graphs = {}, {}, {}
+        for tf in LEG_SLOPE_TIMEFRAMES:
+            df = self._frame(leg_sym, tf)
+            if df is None or len(df) == 0:
+                continue
+            rsl, msl, rg, mg = self._slope_and_graph(df)
+            key = tf.replace("TIMEFRAME_", "")
+            slopes[key] = {"rsi": rsl, "macd": msl}
+            rsi_graphs[key] = rg
+            macd_graphs[key] = mg
+        return slopes, rsi_graphs, macd_graphs
 
     def _get_display_pair(self):
         """Best CE/PE pair for the dashboard: the open basket's pair if in a trade,
@@ -370,12 +415,10 @@ class SymbolWorker(threading.Thread):
                    "cycle_pl": legdict.get("total_profit"),
                    "target": ad.get("close_threshold"),
                    "mg": legdict.get("count", 1) - 1}
-        slopes_raw = ad.get("slopes", {}) or {}
-        slope_signs = {
-            tf: {"rsi": (v.get("rsi") or {}).get("sign", 0),
-                 "macd": (v.get("macd") or {}).get("sign", 0)}
-            for tf, v in slopes_raw.items()
-        }
+        def _signs(raw):
+            return {tf: {"rsi": (v.get("rsi") or {}).get("sign", 0),
+                         "macd": (v.get("macd") or {}).get("sign", 0)}
+                    for tf, v in (raw or {}).items()}
         return {
             "asset_type": self.asset_type,
             "underlying": self._active_underlying,
@@ -386,14 +429,19 @@ class SymbolWorker(threading.Thread):
                        "fc": ad.get("fc_score", 0)},
             "entry_direction": ad.get("entry_direction", "WAIT"),
             "slope_direction": ad.get("slope_direction", "WAIT"),
-            "slopes": slope_signs,
+            "slopes": _signs(ad.get("slopes")),               # index slopes (open)
+            "leg_slopes": _signs(ad.get("leg_slopes")),       # leg slopes (book/fc)
             "entry_allowed": ad.get("entry_allowed", True),
             "entry_chop_block": ad.get("entry_chop_block", False),
+            "exit_allowed": ad.get("exit_allowed", True),
+            "min_hold_left": ad.get("min_hold_left", 0),
             "exit_reason": ad.get("exit_reason"),
             "variant": ad.get("variant", "netting"),
             "rsi": ad.get("rsi_mtf", {}),
-            "rsi_graphs": ad.get("rsi_graphs", {}),
+            "rsi_graphs": ad.get("rsi_graphs", {}),           # index pivot charts (open)
             "macd_graphs": ad.get("macd_graphs", {}),
+            "leg_rsi_graphs": ad.get("leg_rsi_graphs", {}),   # leg pivot charts (book/fc)
+            "leg_macd_graphs": ad.get("leg_macd_graphs", {}),
             "close_threshold": ad.get("close_threshold"),
             "pair": self._get_display_pair(),
             "position": pos,
@@ -468,6 +516,7 @@ class SymbolWorker(threading.Thread):
                     if not side:
                         continue
                     self.active = {"side": side, "symbol": row.get("symbol")}
+                    self._entry_mono = monotonic()   # min-hold from adoption (avoid an instant exit on a stale leg pivot after restart)
                     avg = float(row.get("netAvg", row.get("buyAvg", 0.0)) or 0.0)
                     self.ctx.tracker.seed_from_broker(row.get("symbol"), abs(net), avg,
                                                       1 if side == "CE" else -1)
