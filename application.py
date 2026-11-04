@@ -22,7 +22,7 @@ from time import sleep
 
 import constants
 from constants import (
-    SYMBOLS_JSON, SUPERVISOR_TICK, DAILY_MAINTENANCE_AT, now_ist, today_ist,
+    SYMBOLS_JSON, SUPERVISOR_TICK, DAILY_MAINTENANCE_AT, MARKET_HOURS, now_ist, today_ist,
 )
 from fyers_auth import FyersAuth
 from fyers_api import FyersAPI
@@ -57,6 +57,7 @@ class EngineContext:
     option_df: object = None
     commodity_df: object = None
     prime_renewal: str = ""
+    _last_money: dict = field(default_factory=dict)   # last balance/positions snapshot (reused when markets closed)
 
     def is_trading_day(self, d: date) -> bool:
         """Weekend + NSE-holiday aware (special sessions override)."""
@@ -153,25 +154,50 @@ def supervise_workers(workers: dict, config: dict, ctx: EngineContext) -> None:
             workers[sym] = nw
 
 
-def _write_account(ctx: EngineContext) -> None:
-    """Snapshot balance/equity/margin/unrealized (+ API plan & renewal) for the dashboard."""
-    bal = ctx.api.get_balance()
-    resp = ctx.api.positions()
-    opens = resp.get("netPositions", []) if isinstance(resp, dict) else []
-    unreal = sum(float(p.get("pl", 0) or 0) for p in opens)
-    margin = sum(abs(int(p.get("netQty", 0))) * float(p.get("netAvg", 0) or 0) for p in opens)
+def _markets_open(ctx: EngineContext, config: dict) -> bool:
+    """True if any enabled symbol's market window is open right now (coarse static hours:
+    INDEX 09:15–15:30, COMMODITY 09:00–23:30). Used to skip read-API polling off-hours."""
+    if not ctx.is_trading_day(now_ist().date()):
+        return False
+    t = now_ist().time()
+    for entry in config.get("symbols", []):
+        if not entry.get("enabled"):
+            continue
+        hrs = MARKET_HOURS.get(entry.get("asset_type", "INDEX"), MARKET_HOURS["INDEX"])
+        if hrs["open"] <= t <= hrs["close"]:
+            return True
+    return False
+
+
+def _write_account(ctx: EngineContext, markets_open: bool = True) -> None:
+    """Snapshot balance/equity/margin/unrealized (+ API plan & renewal) for the dashboard.
+    When all markets are CLOSED we SKIP the balance/positions read-API calls (nothing moves while
+    the market is shut) and reuse the last snapshot — so no unnecessary API traffic off-hours. The
+    plan badge + renewal countdown (no API) still refresh, and a market_open flag is published."""
     renewal_days = None
     if ctx.prime_renewal:
         try:
             renewal_days = (date.fromisoformat(ctx.prime_renewal) - today_ist()).days
         except Exception:
             renewal_days = None
+    if markets_open:
+        bal = ctx.api.get_balance()
+        resp = ctx.api.positions()
+        opens = resp.get("netPositions", []) if isinstance(resp, dict) else []
+        unreal = sum(float(p.get("pl", 0) or 0) for p in opens)
+        margin = sum(abs(int(p.get("netQty", 0))) * float(p.get("netAvg", 0) or 0) for p in opens)
+        ctx._last_money = {
+            "balance": round(bal, 2), "unrealized": round(unreal, 2),
+            "equity": round(bal + unreal, 2), "margin_used": round(margin, 2),
+            "open_positions": len(opens),
+        }
+    money = ctx._last_money or {
+        "balance": 0, "unrealized": 0, "equity": 0, "margin_used": 0, "open_positions": 0}
     write_account_state({
-        "balance": round(bal, 2), "unrealized": round(unreal, 2),
-        "equity": round(bal + unreal, 2), "margin_used": round(margin, 2),
-        "open_positions": len(opens),
+        **money,
         "api_plan": constants.API_PLAN,
         "prime_renewal_days": renewal_days,
+        "market_open": bool(markets_open),
     })
 
 
@@ -290,7 +316,9 @@ def main() -> None:
             # supervise workers
             supervise_workers(workers, config, ctx)
             try:
-                _write_account(ctx)
+                # Off-hours we skip the balance/positions read-API poll (nothing changes when the
+                # market is shut) — only auth keep-alive + daily reauth run outside market hours.
+                _write_account(ctx, _markets_open(ctx, config))
             except Exception:
                 pass
 
