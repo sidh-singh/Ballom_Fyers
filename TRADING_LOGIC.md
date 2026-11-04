@@ -38,9 +38,9 @@ scores** that drive entry, force-close and the profit book. A mean-reversion
 - **MACD** histogram is unbounded; the **signal line's sign picks the side** —
   `signal > 0` → read the HIGH side, `signal < 0` → the LOW side.
 
-Slopes are computed on the **index** for `SLOPE_TIMEFRAMES` = **M5, M15, H1, H4, D1**
-(the de-duplicated union of the three sections' timeframes; D1 is the only extra
-fetch — M5/M15/H1/H4 are already pulled for the RSI ladder).
+Slopes are computed on the **index** for `SLOPE_TIMEFRAMES` = **M5, M15, H4**
+(the de-duplicated union of the three sections' timeframes — all already pulled for the
+RSI ladder, so slopes add no extra history calls; D1/H1 are no longer used for slopes).
 
 ### 1.2 Per-section weighted scores (`strategy._weighted_score`)
 Each decision **section** has its own `{timeframe: weight}` map; its score is the RAW
@@ -53,14 +53,19 @@ score = Σ_tf  weight_tf · (rsi_sign_tf + macd_sign_tf)      each sign ∈ {−
 | Section | Timeframes · weights (`constants.py`) | Range | Threshold | Used for |
 |---|---|---|---|---|
 | **OPEN** | `{H4:1, M5:1}` | ±4 | `ENTRY_S=2`, `LADDER_S=2` | fresh entry + ladder-add gate |
-| **BOOK** | `{M15:1}` | ±2 | `BOOK_S=1` | profit book (variant A) |
-| **FORCE_CLOSE** | `{M15:4, H1:3, H4:2, D1:1}` | ±20 | `FORCE_CLOSE_S=12` | force-close |
+| **BOOK** | `{M5:1}` | ±2 | `BOOK_S=2` | profit book (variant A) — **both** M5 slopes reverse |
+| **FORCE_CLOSE** | `{M15:1}` | ±2 | `FORCE_CLOSE_S=1` | force-close + entry agreement gate — **either** M15 slope reverses |
 
 **grey_fill** (OPEN + BOOK only): if exactly one of a timeframe's two signs is 0
 (its RSI or MACD is at a peak/plateau — pivot undefined), the grey sign borrows the
 other indicator's direction, so a TF clear on one indicator counts as a **full**
 aligned vote (±2·w) instead of half. Both grey → the TF stays 0. FORCE_CLOSE uses
 **raw** signs (no grey_fill).
+
+> **BOOK = both, FORCE_CLOSE = either.** With `BOOK={M5:1}` and `BOOK_S=2`, a book needs the
+> M5 score at ±2 — i.e. **both** the M5 RSI and MACD slopes reversed (a plateau on one borrows
+> the other via grey_fill). With `FORCE_CLOSE={M15:1}` and `FORCE_CLOSE_S=1`, a force-close fires
+> at M15 score ±1 — i.e. **either** the M15 RSI or MACD slope turning the net M15 slope adverse.
 
 ### 1.3 Signals
 `DO_NOTHING, BUY, SELL, CLOSE_BUY, CLOSE_SELL, BUY_MORE, SELL_MORE`.
@@ -107,11 +112,12 @@ buy_pp  = (cycle_pl > close_threshold)  AND  (book_score ≤ −BOOK_S)   → CL
 
 - `close_threshold = ₹(HEDGE_PER_UNIT × units) + charges` with **`HEDGE_PER_UNIT=100`**
   → the floor is **+₹100 per unit plus estimated taxes/charges** (§4), so a book only
-  fires once the basket is **net-positive by ≥ ₹100×units** AND the BOOK score
-  (`M15`) has reversed against the basket.
+  fires once the basket is **net-positive by ≥ ₹100×units** AND the BOOK score has
+  reversed: with `BOOK={M5:1}` + `BOOK_S=2`, that means **both** the M5 RSI and MACD
+  slopes have turned against the basket (book_score ≤ −2).
 - This is the Alcadeias `profit > times·PROFIT_PROTECT_USD_PER_UNIT AND book_score
   reversal`, with the `$1/unit` floor replaced by the tax-aware Fyers floor so the
-  booked trade can never net a loss. Winners run until M15 momentum turns.
+  booked trade can never net a loss. Winners run until the M5 slope fully reverses.
 - Checked **before** the force-close, so in profit a book always beats a capitulation.
 
 > **Variant B (`fyers_hedging_*`)** drops the `book_score` condition and books the
