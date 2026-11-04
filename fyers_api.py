@@ -852,6 +852,22 @@ class FyersAPI:
                 start_dt = datetime.combine(prev_d, prev_close)
             candles_remaining -= 1
 
+        # Fyers caps a single history request's date range: 100 days for intraday (1m–240m),
+        # 366 for daily, 30 trading days for seconds. Walking back `candles` bars on H1/H4/D1
+        # easily blows past the 100-day cap (e.g. 500 H4 bars ≈ 200 calendar days on MCX, ~440
+        # on the index) → the API errors ("H4 failing"). Clamp the window to just under the cap;
+        # we still return 100+ bars, ample for RSI(14) + the latest-pivot slope. (Fyers' own
+        # workaround for longer spans is paginated 100-day windows; we don't need that history.)
+        if resolution.endswith("S"):
+            _max_days = 28
+        elif resolution == "D":
+            _max_days = 360
+        else:
+            _max_days = 95
+        _earliest = end_dt - timedelta(days=_max_days)
+        if start_dt < _earliest:
+            start_dt = _earliest
+
         # call Fyers history API
         sym_name = symbol.split(":")[-1] if ":" in symbol else symbol
         is_option = (
