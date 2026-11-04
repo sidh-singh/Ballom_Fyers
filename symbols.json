@@ -6,7 +6,7 @@
             "underlying": "NSE:NIFTY50-INDEX",
             "step_up_balance": 100000,
             "unit_max_limit": 10,
-            "hedge_per_unit": 100,
+            "hedge_per_unit": 300,
             "enabled": true
         },
         {
@@ -16,8 +16,10 @@
             "underlying": "MCX:GOLDM-FUT",
             "step_up_balance": 100000,
             "unit_max_limit": 10,
-            "hedge_per_unit": 100,
-            "enabled": true
+            "hedge_per_unit": 300,
+            "min_premium_per_lot": 0,
+            "enabled": true,
+            "_note": "min_premium_per_lot=0 disables the ₹10k premium floor for commodities (gold option per-lot premiums differ from NIFTY). Tune hedge_per_unit / min_premium_per_lot / round_strike_step for GOLDM once observed in demo."
         },
         {
             "symbol": "SILVERM",
@@ -26,8 +28,10 @@
             "underlying": "MCX:SILVERM-FUT",
             "step_up_balance": 100000,
             "unit_max_limit": 10,
-            "hedge_per_unit": 100,
-            "enabled": true
+            "hedge_per_unit": 300,
+            "min_premium_per_lot": 0,
+            "enabled": true,
+            "_note": "Same as GOLDM — premium floor disabled; tune per-symbol knobs once observed in demo."
         }
     ],
     "max_balance_usage": 90000,
