@@ -7,6 +7,15 @@ Format: `YYYY-MM-DD` — change — _why_.
 
 ---
 
+## 2026-11-04 — Off-hours: no balance/positions API polling when markets are closed
+
+The supervisor polled `get_balance` + `positions` every 30 s all night (~2 read-API calls / 30 s for
+nothing — balance/positions don't move while the market is shut). Now it polls only while any enabled
+symbol's market window is open (index to 15:30, commodities to 23:30); off-hours it reuses the last
+snapshot and writes only the plan/renewal + a `market_open` flag (no API). The per-symbol worker was
+already clean out-of-window (it returns before any API past its trading-window guard). The only API
+calls off-hours remain the **auth keep-alive** (token verify / 5 min) + the **~00:10 daily reauth**.
+
 ## 2026-11-04 — Docs: BRANCHES.md refreshed to the current logic
 
 Brought the system map up to date with every recent change: the RSI+MACD **index/leg split**
