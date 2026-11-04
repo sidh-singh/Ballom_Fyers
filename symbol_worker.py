@@ -85,11 +85,15 @@ class SymbolWorker(threading.Thread):
         logger.info("[%s] worker started (%s)", self.symbol, self.asset_type)
         self._recover_active()
         while not self.ctx.stop_event.is_set():
+            _loop_start = monotonic()
             try:
                 self._tick()
             except Exception as e:
                 logger.exception("[%s] tick error: %s", self.symbol, e)
+            inner = monotonic() - _loop_start            # inner loop: tick work (excl. idle wait)
             self.ctx.stop_event.wait(WORKER_IDLE_SLEEP)
+            outer = monotonic() - _loop_start            # outer loop: full iteration incl. idle wait
+            print(f"[{self.symbol}: inner={inner:.2f}s / outer={outer:.2f}s]", flush=True)
         logger.info("[%s] worker stopped", self.symbol)
 
     # ── one iteration ───────────────────────────────────────────────────────
