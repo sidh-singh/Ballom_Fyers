@@ -233,6 +233,14 @@ snapshot, maintenance, plan). A short idle makes the **LTP-based profit-book rea
 (vs ~70 s before); entry/slope signals are bar-based so they're unaffected. Tunable via
 `WORKER_IDLE_SLEEP`.
 
+**Off-hours = no wasted API.** When every enabled market is closed, the per-symbol worker returns
+before any API call (its trading-window guard), and the supervisor **skips the balance/positions
+read poll** (nothing moves while shut) — reusing the last snapshot and refreshing only the plan
+badge / renewal countdown (no API) + a `market_open` flag. So outside market hours the *only* API
+calls are the **auth keep-alive** (token verify / 5 min) and the **~00:10 daily reauth** — the
+important ones. Markets are "open" here if any enabled symbol's window is live (index to 15:30,
+commodities to 23:30).
+
 ---
 
 ## 9. Environment & how to run
