@@ -7,6 +7,23 @@ Format: `YYYY-MM-DD` — change — _why_.
 
 ---
 
+## 2026-11-04 — RSI+MACD retune: BOOK→M5 (both), FORCE_CLOSE→M15 (either) + loop timing
+
+Strategy timeframe retune (OPEN unchanged = H4 + M5, both RSI+MACD):
+- **Booking (NETTING):** BOOK score moved M15 → **M5** and `BOOK_S` 1 → **2**, so a profit-book
+  now needs **both** the M5 RSI and MACD slopes to reverse against the basket (book_score ≤ −2; a
+  plateau on one borrows the other via grey_fill). HEDGING is unchanged — it still books on the
+  ₹100×units + tax target (no book score).
+- **Force-close:** FORCE_CLOSE score moved {M15:4,H1:3,H4:2,D1:1} → **{M15:1}** and `FORCE_CLOSE_S`
+  12 → **1**, so force-close fires when **either** the M15 RSI or MACD slope reverses (net-adverse
+  M15). This also narrows the entry agreement-gate veto to M15.
+- `SLOPE_TIMEFRAMES` auto-reduces to **{H4, M5, M15}** — D1/H1 are no longer fetched for slopes
+  (fewer history calls). The dashboard meters + pivot grid auto-adapt to the new sections.
+- **Loop timing:** `symbol_worker.run()` now prints per-symbol iteration timing each loop —
+  `[NIFTY: inner=0.82s / outer=60.84s]` (inner = tick work, outer = full iteration incl. the idle
+  wait), visible on the start_app.bat console.
+- Config-only strategy change (constants.py); verified on Python 3.11.
+
 ## 2026-11-03 — Dashboard: RSI+MACD pivot charts + score / exit / ₹ gauges
 
 Rebuilt the per-symbol analysis panel for the RSI+MACD engine (no SHA):
