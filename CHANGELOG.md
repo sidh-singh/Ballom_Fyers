@@ -1,5 +1,18 @@
 # CHANGELOG — `fyers_live` / `fyers_demo`
 
+## 2026-11-04 — Fyers Prime enabled: plan-aware limits / brokerage + dashboard fix
+
+- `symbols.json "api_plan"` → **prime**. Fyers does not expose Prime via API, so it is
+  config-driven; this switches the whole chain to Prime: `api_meter` uses the higher limits
+  (DATA 10/500/500000, ORDER 10/500/500000), `brokerage_per_order` → **₹15** (was ₹20), and the
+  profit target's tax estimate follows (STT / exchange / SEBI / stamp / GST rates unchanged).
+- **Dashboard fix:** `api_panel` hardcoded the Standard `API_LIMITS` and — being a separate
+  process — never ran `set_api_plan`, so it showed Standard thresholds even on Prime. It now
+  reads the plan from `account_state` and shows `API_LIMITS_PRIME` vs `API_LIMITS` day/sec/min
+  thresholds; the PRIME badge + renewal countdown already read `account_state`.
+- To show the renewal countdown, set `prime_renewal: "YYYY-MM-DD"` in `symbols.json`.
+- Restart the engine + dashboard to apply.
+
 ## 2026-11-03 — Dashboard: RSI DCA-ladder bars + next-position gauge + ₹ profit meter
 
 More detailed per-symbol panel (symbols stay dynamic — rendered from whatever the workers write
