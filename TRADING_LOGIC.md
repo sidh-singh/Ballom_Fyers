@@ -6,7 +6,7 @@
 > (SHA removed), reproduced exactly, adapted from MT5 **hedging** to Fyers
 > **netting** (buy-only, clubbed & averaged).
 > **Variant B (HEDGING):** profit booked at a **fixed tax-aware ₹ target**
-> (`₹100×units + charges`, the current-Fyers rule). The sibling `fyers_netting_*`
+> (`₹300×units + charges`, the current-Fyers rule). The sibling `fyers_netting_*`
 > branches book on a BOOK-score reversal instead (variant A) — everything else is
 > identical.
 > **Last updated:** 2026-11-03
@@ -39,9 +39,12 @@ extremes) averages into an open basket, which is booked at a fixed ₹ target.
 - **MACD** histogram is unbounded; the **signal line's sign picks the side** —
   `signal > 0` → read the HIGH side, `signal < 0` → the LOW side.
 
-Slopes are computed on the **index** for `SLOPE_TIMEFRAMES` = **M5, M15, H4**
-(the de-duplicated union of the sections' timeframes — all already pulled for the RSI
-ladder, so slopes add no extra history calls; D1/H1 are no longer used for slopes).
+**Two slope sources (2026-11-04).** OPEN (entry + the ladder-add gate + the entry
+agreement-gate veto) reads the **main index** (`SLOPE_TIMEFRAMES` = M5, M15, H4). The
+**FORCE-CLOSE exit** reads the **active CE/PE leg's OWN option candles** (`LEG_SLOPE_TIMEFRAMES`
+= M5, M15) — so force-close follows the premium you actually hold. (Booking is the ₹ target,
+not a slope.) Anti-vibration: after an entry, the ₹ target AND force-close are suppressed for
+`MIN_HOLD_SECONDS` (180 s) so a basket can never open-then-close on a stale leg pivot.
 
 ### 1.2 Per-section weighted scores (`strategy._weighted_score`)
 Each decision **section** has its own `{timeframe: weight}` map; its score is the RAW
@@ -51,10 +54,10 @@ weighted sum of the latest-pivot signs, range **±(2·Σ|weight|)**:
 score = Σ_tf  weight_tf · (rsi_sign_tf + macd_sign_tf)      each sign ∈ {−1, 0, +1}
 ```
 
-| Section | Timeframes · weights (`constants.py`) | Range | Threshold | Used for |
-|---|---|---|---|---|
-| **OPEN** | `{H4:1, M5:1}` | ±4 | `ENTRY_S=2`, `LADDER_S=2` | fresh entry + ladder-add gate |
-| **FORCE_CLOSE** | `{M15:1}` | ±2 | `FORCE_CLOSE_S=1` | force-close + entry agreement gate — **either** M15 slope reverses |
+| Section | Weights | Range | Threshold | Source | Used for |
+|---|---|---|---|---|---|
+| **OPEN** | `{H4:1, M5:1}` | ±4 | `ENTRY_S=2`, `LADDER_S=2` | **index** | fresh entry + ladder-add gate |
+| **FORCE_CLOSE** | `{M15:1}` | ±2 | `FORCE_CLOSE_S=1` | **leg** (exit) / **index** (entry gate) | force-close — **either** M15 slope reverses |
 
 (There is **no BOOK section** in variant B — the profit exit is the fixed ₹ target,
 not a score. `BOOK_SCORE_WEIGHTS` is still defined in `constants.py` for parity but
@@ -113,10 +116,11 @@ Close the whole basket the moment it clears the tax-aware target:
 buy_profit > close_threshold   → CLOSE_BUY ('target')
 ```
 
-- `close_threshold = ₹(HEDGE_PER_UNIT × units) + charges` with **`HEDGE_PER_UNIT=100`**
-  → **+₹100 per unit plus estimated taxes/charges** (§4), so the booked trade nets
-  **≥ ₹100×units**. As the balance tier raises `units`, the target scales up
-  (unit 1 → ~₹100, unit 2 → ~₹200, …), exactly the current-Fyers booking rule.
+- `close_threshold = ₹(HEDGE_PER_UNIT × units) + charges` with **`HEDGE_PER_UNIT=300`**
+  → **+₹300 NET per unit plus estimated taxes/charges** (§4; ~10–15 NIFTY points on 1 lot), so
+  the booked trade nets **≥ ₹300×units**. As the balance tier raises `units`, the target scales
+  up (unit 1 → ~₹300, unit 2 → ~₹600, …). The target + force-close are suppressed for the first
+  `MIN_HOLD_SECONDS` after entry (anti-vibration); force-close reads the leg's own chart.
 - This is the Alcadeias `buy_profit > close_threshold` (+$unit) target, with the
   `$unit` target replaced by the tax-aware Fyers target. **No BOOK-score reversal.**
 - Checked **before** the force-close.
@@ -149,6 +153,13 @@ is what the strategy sees as `total_profit`, and the close books
 `STEP_UP_BALANCE = ₹100,000` and `UNIT_MAX_LIMIT = 10` (per-symbol override in
 `symbols.json`). Units are fixed at entry and drive both the Fibo lot ladder and the
 `close_threshold` target. The per-contract lot comes from the downloaded NSE/MCX CSV.
+
+**Strike / expiry scan (`scanner.py`).** Best CE + PE within a **premium band**
+`SCAN_MIN_PREMIUM_PER_LOT`…`SCAN_MAX_PREMIUM_PER_LOT` per lot (₹10k–₹30k) so we hold near-ATM
+options with real value/history; a **round-strike** bonus (`SCAN_ROUND_STRIKE_STEP` = ₹1000 →
+NIFTY 24000/25000/26000); **expiry window** `SCAN_MIN_DTE`…`SCAN_MAX_DTE` = **7–31 DTE** with a
+"nearest ≥ MIN" fallback (gold/silver monthly resolves). Per-symbol overridable; commodities set
+`min_premium_per_lot: 0` until tuned.
 
 ---
 
