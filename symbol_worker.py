@@ -92,10 +92,10 @@ class SymbolWorker(threading.Thread):
                 self._tick()
             except Exception as e:
                 logger.exception("[%s] tick error: %s", self.symbol, e)
-            inner = monotonic() - _loop_start            # inner loop: tick work (excl. idle wait)
+            work = monotonic() - _loop_start             # this tick's fetch+trade work (excludes the idle wait)
             self.ctx.stop_event.wait(WORKER_IDLE_SLEEP)
-            outer = monotonic() - _loop_start            # outer loop: full iteration incl. idle wait
-            print(f"[{self.symbol}: inner={inner:.2f}s / outer={outer:.2f}s]", flush=True)
+            cycle = monotonic() - _loop_start            # full loop cycle = work + the WORKER_IDLE_SLEEP idle (ONE loop)
+            print(f"[{self.symbol}] fetch+trade={work:.2f}s / cycle={cycle:.2f}s", flush=True)
         logger.info("[%s] worker stopped", self.symbol)
 
     # ── one iteration ───────────────────────────────────────────────────────
