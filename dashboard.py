@@ -2,7 +2,7 @@
 dashboard.py — rich read-only dashboard for fyers_demo / fyers_live.
 
 Separate process. Reads the JSON state files the engine writes under
-C:/Ballom_FYR/state/ and renders:
+~/Ballom_FYR/state/ and renders:
   • account KPIs      (account_state.json + profit_history.json)
   • API-usage meter   (api_usage.json)
   • per-symbol panel  (signal_state.json): signal, best CE/PE pair, RSI+MACD slope
