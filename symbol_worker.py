@@ -294,7 +294,8 @@ class SymbolWorker(threading.Thread):
             res, resample = "60", "6h"
         try:
             df = self.ctx.api.fetch_historical_data(
-                symbol, res, RSI_CANDLE_COUNT, market_type=self.asset_type)
+                symbol, res, RSI_CANDLE_COUNT, market_type=self.asset_type,
+                holidays=self.ctx.holidays, special_sessions=self.ctx.special_sessions)
             if resample is not None:
                 df = self._resample(df, resample)
         except Exception as e:
