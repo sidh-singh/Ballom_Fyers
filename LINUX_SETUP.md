@@ -1,4 +1,4 @@
-# Running on Linux (Debian 12 "Bookworm") — `linux_fyers_netting_live`
+# Running on Linux (Debian 12 / 13) — `linux_fyers_netting_live`
 
 Linux port of **`fyers_netting_live`**. Trading logic is byte-identical to the Windows branch; only the
 OS-specific bits changed:
@@ -10,8 +10,12 @@ OS-specific bits changed:
 
 ## One-time setup
 ```bash
-sudo apt update
-sudo apt install -y python3.11 python3.11-venv git
+# Debian 13 (Trixie) system python is 3.13; this bot needs 3.11 (aiohttp pin). Get it via uv:
+sudo apt update && sudo apt install -y git curl
+curl -LsSf https://astral.sh/uv/install.sh | sh
+source $HOME/.local/bin/env
+uv python install 3.11
+# (Debian 12 instead: sudo apt install -y python3.11 python3.11-venv git  — skip uv)
 git clone <your-repo-url> ballom && cd ballom
 git checkout linux_fyers_netting_live
 # optional: pick where state/token/cache live (default ~/Ballom_FYR); the run user must own it
@@ -27,8 +31,7 @@ First run of either script creates `.venv/` and installs `requirements_fyers.txt
 contains dash + plotly, so one venv serves both processes).
 
 ## Why Python 3.11 (not 3.13)
-`fyers-apiv3==3.1.7` pins an `aiohttp` with no 3.13 wheel. **Debian 12 ships 3.11 natively** — no PPA
-or pyenv needed.
+`fyers-apiv3==3.1.7` pins `aiohttp==3.8.4`, which has no 3.13 wheel and won't build on 3.13. **Debian 13 (Trixie) ships Python 3.13** as its system `python3` and has **no `python3.11` apt package**, so on Trixie we fetch a standalone 3.11 with `uv` (above). **Debian 12 (Bookworm)** has 3.11 natively (`sudo apt install -y python3.11 python3.11-venv`), so there `uv` isn't needed. The `.sh` launchers auto-detect whichever is present: explicit `$PYTHON` → `python3.11` on PATH → `uv python find/install 3.11`.
 
 ## Unattended with systemd
 `/etc/systemd/system/ballom-linux_fyers_netting_live.service` (edit `User=` and the two paths to match your box):
