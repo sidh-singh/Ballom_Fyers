@@ -630,6 +630,68 @@ def log_table():
     ])
 
 
+# ── full API rate-limit panel (bottom of the page) ───────────────────────────
+def api_limits_panel():
+    """Every API category (DATA / ORDER / USERINFO) with sec / min / day usage vs the plan's
+    limit, and a live rate-limit detector: shows ⛔ RATE-LIMITED + the cooldown while the meter is
+    in a Fyers -429 back-off, or 'N× hit today' if it has been limited earlier today."""
+    usage = _read(API_USAGE_FILE, {}) or {}
+    cats = usage.get("categories", {})
+    acct = _read(ACCOUNT_STATE_FILE, {}) or {}
+    plan = str(acct.get("api_plan", usage.get("plan", "standard"))).upper()
+    limits = API_LIMITS_PRIME if plan == "PRIME" else API_LIMITS
+    breaches = int(usage.get("minute_breaches", 0) or 0)
+
+    def _cell(label, used, limit):
+        p = round(100 * used / limit, 1) if limit else 0
+        col = C["red"] if p >= 85 else (C["amber"] if p >= 60 else C["dim"])
+        return html.Span(f"{label} {used:,}/{limit:,}", style={
+            "color": col, "fontSize": "11.5px", "marginRight": "14px",
+            "fontFamily": "monospace", "minWidth": "118px", "display": "inline-block"})
+
+    rows = []
+    for cat, lim in limits.items():
+        c = cats.get(cat, {})
+        sec, mn, day = c.get("sec", {}), c.get("min", {}), c.get("day", {})
+        limited = bool(c.get("rate_limited"))
+        cooldown = float(c.get("cooldown_s", 0) or 0)
+        today = int(c.get("limited_today", 0) or 0)
+        dused, dlim = day.get("used", 0), day.get("limit", lim["day"])
+        dpct = round(100 * dused / dlim, 1) if dlim else 0
+        dcol = C["red"] if dpct >= 85 else (C["amber"] if dpct >= 60 else C["green"])
+        status = (_chip(f"⛔ RATE-LIMITED · {cooldown:.0f}s", C["red"]) if limited
+                  else (_chip(f"{today}× limited today", C["amber"]) if today
+                        else _chip("OK", C["green"])))
+        rows.append(html.Div([
+            html.Span(cat, style={"fontWeight": "800", "fontSize": "13px", "color": C["text"],
+                                  "width": "92px", "display": "inline-block"}),
+            _cell("sec", sec.get("used", 0), sec.get("limit", lim["sec"])),
+            _cell("min", mn.get("used", 0), mn.get("limit", lim["min"])),
+            _cell("day", dused, dlim),
+            html.Div(style={"display": "inline-block", "width": "130px", "height": "6px",
+                            "verticalAlign": "middle", "background": C["border"],
+                            "borderRadius": "3px", "overflow": "hidden", "marginRight": "12px"},
+                     children=html.Div(style={"height": "100%", "width": f"{min(dpct,100)}%",
+                                              "background": dcol})),
+            html.Span(f"{dpct}%", style={"color": dcol, "fontSize": "11px", "fontWeight": "700",
+                                         "marginRight": "10px"}),
+            html.Span(status, style={"marginLeft": "auto"}),
+        ], style={"display": "flex", "alignItems": "center", "padding": "7px 4px",
+                  "borderBottom": f"1px solid {C['border']}"}))
+
+    title = html.Div([
+        html.Span("API RATE LIMITS", style={"color": C["dim"], "fontSize": "12px",
+                  "letterSpacing": "0.6px", "fontWeight": "700"}),
+        html.Span(_chip(f"{plan} PLAN", C["amber"] if plan == "PRIME" else C["grey"]),
+                  style={"marginLeft": "10px"}),
+        html.Span(_chip(f"⚠ {breaches} MIN-BREACHES", C["red"]) if breaches > 3 else "",
+                  style={"marginLeft": "8px"}),
+        html.Span("used / limit per sec·min·day — amber ≥60%, red ≥85%, ⛔ = Fyers -429 cooldown",
+                  style={"color": C["muted"], "fontSize": "10px", "marginLeft": "auto"}),
+    ], style={"display": "flex", "alignItems": "center", "marginBottom": "8px", "flexWrap": "wrap"})
+    return _card([title] + rows)
+
+
 # ── app ──────────────────────────────────────────────────────────────────────
 app = dash.Dash(__name__, title="fyers dashboard")
 app.layout = html.Div([
@@ -645,13 +707,14 @@ app.layout = html.Div([
     html.Div(id="api", style={"marginTop": "16px"}),
     html.Div(id="symbols", style={"marginTop": "18px"}),
     html.Div(id="log", style={"marginTop": "16px"}),
+    html.Div(id="api_limits", style={"marginTop": "16px"}),
 ], style={"maxWidth": "1400px", "margin": "0 auto", "padding": "26px",
           "fontFamily": "Inter, system-ui, sans-serif", "background": C["bg"], "minHeight": "100vh"})
 
 
 @app.callback(
     Output("status", "children"), Output("kpis", "children"), Output("api", "children"),
-    Output("symbols", "children"), Output("log", "children"),
+    Output("symbols", "children"), Output("log", "children"), Output("api_limits", "children"),
     Input("tick", "n_intervals"),
 )
 def _refresh(_):
@@ -667,7 +730,7 @@ def _refresh(_):
     if not panels:
         panels = [html.Div("Waiting for engine signals…", style={
             "color": C["muted"], "padding": "28px", "textAlign": "center"})]
-    return status_strip(), kpi_row(), api_panel(), panels, log_table()
+    return status_strip(), kpi_row(), api_panel(), panels, log_table(), api_limits_panel()
 
 
 if __name__ == "__main__":
