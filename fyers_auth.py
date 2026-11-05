@@ -7,7 +7,7 @@ updater, trading, dashboard) import this instead of doing their own auth.
 
 Token lifecycle
 ───────────────
-  1. On startup → load token from C:/Ballom_FYR/fyers_token.json
+  1. On startup → load token from ~/Ballom_FYR/fyers_token.json
   2. If token file exists, not expired, and verifies → reuse immediately
   3. Otherwise → full TOTP-based login + persist new token
   4. On any API auth failure → automatic re-auth + retry the failed call
@@ -311,7 +311,7 @@ class FyersAuth:
         self._token_date = None
 
     # ╔══════════════════════════════════════════════════════════════════════════╗
-    # ║  TOKEN PERSISTENCE (C:/Ballom_FYR/fyers_token.json)                      ║
+    # ║  TOKEN PERSISTENCE (~/Ballom_FYR/fyers_token.json)                      ║
     # ╚══════════════════════════════════════════════════════════════════════════╝
 
     def _save_token(self, token: str) -> None:
@@ -493,7 +493,7 @@ class FyersAuth:
           3. POST /verify_pin → Bearer access_token
           4. POST /token → authorization code (via redirect URL or response body)
           5. SessionModel.generate_token() → final access_token
-          6. Persist token to C:/Ballom_FYR/fyers_token.json
+          6. Persist token to ~/Ballom_FYR/fyers_token.json
           7. Build and return FyersModel
         """
         url_otp    = f"{self.BASE_URL_LOGIN}/send_login_otp"
