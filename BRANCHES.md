@@ -1,5 +1,7 @@
 # BRANCHES — Ballom_Fyers system & branch map
 
+> **Linux variant (`linux_*`).** This is the Debian 12 port of its Windows sibling (`fyers_demo`) — same trading logic; only `BALLOM_DIR` (now OS-aware) and the launchers (`.sh`; see `LINUX_SETUP.md`) differ. Run with `./start_app.sh` + `./start_dashboard.sh`, Python 3.11.
+
 > **Read this first.** It is the self-contained map of the whole bot: every branch,
 > every module, how to run it, and how the strategies differ — written so the system
 > can be understood and maintained **without any chat/AI history**. This same file is
