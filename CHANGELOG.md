@@ -7,6 +7,10 @@ Format: `YYYY-MM-DD` — change — _why_.
 
 ---
 
+## 2026-11-05 — Debian 13 (Trixie) support: uv-based Python 3.11 + launcher auto-detect
+
+Debian 13 ships Python 3.13 as system `python3` and has no `python3.11` apt package, but the bot needs 3.11 (`fyers-apiv3`'s `aiohttp==3.8.4` has no 3.13 wheel). Setup now fetches a standalone 3.11 via `uv` (`uv python install 3.11`) on Trixie; Bookworm's `apt install python3.11` stays documented as the Debian-12 path. `start_app.sh` / `start_dashboard.sh` gained a `resolve_python` step — explicit `$PYTHON` → `python3.11` on PATH → `uv python find/install 3.11` — with a clear error (both distro recipes) if none is found. README + LINUX_SETUP.md updated. _Why: owner's next server is Debian 13, where the Debian-12 `apt install python3.11` step fails._
+
 ## 2026-11-05 — README: Debian 12 run steps at the top of README
 
 Added a "Running on Linux (Debian 12)" quick-start to `README.md` — install `python3.11`, clone + `git checkout linux_fyers_live`, optional `$BALLOM_DIR`, `./start_app.sh`, `./start_dashboard.sh` — so the run steps are the first thing seen on the server. The full systemd + security guide stays in `LINUX_SETUP.md`. _Why: owner asked for the Debian run steps committed in each `linux_` branch; README is where you look first._
