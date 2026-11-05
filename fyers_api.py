@@ -179,7 +179,7 @@ class FyersAPI:
 
     @staticmethod
     def download_option_data() -> pd.DataFrame:
-        """Download NSE F&O symbol CSV once per day; cache to C:/Ballom_FYR/cache."""
+        """Download NSE F&O symbol CSV once per day; cache to ~/Ballom_FYR/cache."""
         today = datetime.now().strftime("%Y%m%d")
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
         cache_file = CACHE_DIR / f"fyers_options_{today}.csv"

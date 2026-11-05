@@ -13,6 +13,7 @@ Groups:
 
 from __future__ import annotations
 
+import os
 from datetime import datetime, time as dt_time
 from pathlib import Path
 
@@ -39,7 +40,11 @@ def today_ist():
 #  FILE PATHS  (single live tree — demo removed)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-BALLOM_DIR   = Path("C:/Ballom_FYR")
+# OS-aware root: $BALLOM_DIR if set, else ~/Ballom_FYR on Linux / C:/Ballom_FYR on
+# Windows. Token + cache + state all root off this one constant (so a Linux host
+# never creates a stray "C:" folder). systemd can point it anywhere via Environment=.
+_BALLOM_DEFAULT = "C:/Ballom_FYR" if os.name == "nt" else str(Path.home() / "Ballom_FYR")
+BALLOM_DIR   = Path(os.environ.get("BALLOM_DIR", _BALLOM_DEFAULT))
 TOKEN_DIR    = BALLOM_DIR
 TOKEN_FILE   = BALLOM_DIR / "fyers_token.json"
 CACHE_DIR    = BALLOM_DIR / "cache"
