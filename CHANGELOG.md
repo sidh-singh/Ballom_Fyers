@@ -7,6 +7,10 @@ Format: `YYYY-MM-DD` — change — _why_.
 
 ---
 
+## 2026-11-05 — README: Debian 12 run steps at the top of README
+
+Added a "Running on Linux (Debian 12)" quick-start to `README.md` — install `python3.11`, clone + `git checkout linux_fyers_hedging_live`, optional `$BALLOM_DIR`, `./start_app.sh`, `./start_dashboard.sh` — so the run steps are the first thing seen on the server. The full systemd + security guide stays in `LINUX_SETUP.md`. _Why: owner asked for the Debian run steps committed in each `linux_` branch; README is where you look first._
+
 ## 2026-11-05 — Linux port (Debian 12): OS-aware paths + `.sh` launchers
 
 New `linux_fyers_hedging_live` branch forked from `fyers_hedging_live` for the Debian 12 server. Trading logic is byte-identical; only OS-specific bits changed. `constants.py` `BALLOM_DIR` is now OS-aware — `$BALLOM_DIR` env override, else `~/Ballom_FYR` on Linux / `C:/Ballom_FYR` on Windows (token + cache + state all root off it, so a Linux box no longer makes a stray `C:` folder). `start_app.bat` / `start_dashboard.bat` replaced by venv-based `start_app.sh` / `start_dashboard.sh` (Python 3.11 — fyers-apiv3's aiohttp pin has no 3.13 wheel; Debian 12 ships 3.11). `.gitattributes` forces LF on `*.sh`. Added `LINUX_SETUP.md` (apt + venv + systemd + security). _Why: next server is Debian 12; the stack is pure-Python and already IST-aware, so a UTC Linux host runs it unchanged once the one hardcoded `C:/` root is parameterised._
