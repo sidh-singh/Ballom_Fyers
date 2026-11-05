@@ -52,6 +52,8 @@ class ApiMeter:
         self._day_date = now_ist().date()
         self._blocked_until: dict[str, float] = defaultdict(float)  # -429 cooldown
         self._minute_breaches = 0
+        self._last_429_at: dict[str, float] = {}             # cat -> monotonic of last -429
+        self._429_count: dict[str, int] = defaultdict(int)   # cat -> # of -429s today
         self._last_flush = 0.0
 
     # ── classification ──────────────────────────────────────────────────────
@@ -133,6 +135,8 @@ class ApiMeter:
     def _note_429(self, cat: str, retry_after_s: float) -> None:
         with self._lock:
             self._blocked_until[cat] = monotonic() + max(retry_after_s, 1.0)
+            self._last_429_at[cat] = monotonic()
+            self._429_count[cat] += 1
             self._minute_breaches += 1
             if self._minute_breaches > 3:
                 logger.error("More than 3 rate breaches today — backing off hard")
@@ -154,6 +158,7 @@ class ApiMeter:
             self._day_date = d
             self._day.clear()
             self._minute_breaches = 0
+            self._429_count.clear()
             logger.info("API meter: new day %s — daily counters reset", d)
 
     # ── snapshot / persistence ──────────────────────────────────────────────
@@ -170,14 +175,21 @@ class ApiMeter:
             min_count = sum(1 for t in dq if t > now - 60)
             sec_count = sum(1 for t in dq if t > now - 1)
             day_count = self._day[cat]
+            cooldown = max(0.0, self._blocked_until[cat] - now)   # seconds remaining on a -429 cooldown
+            last_429 = self._last_429_at.get(cat)
             cats[cat] = {
                 "sec": {"used": sec_count, "limit": lim["sec"]},
                 "min": {"used": min_count, "limit": lim["min"]},
                 "day": {"used": day_count, "limit": lim["day"],
                         "pct": round(100 * day_count / lim["day"], 1)},
+                "rate_limited": cooldown > 0,                      # currently blocked (-429 cooldown)
+                "cooldown_s": round(cooldown, 1),
+                "limited_today": self._429_count[cat],             # # of -429s hit today
+                "last_429_ago_s": (round(now - last_429, 1) if last_429 is not None else None),
             }
         return {"timestamp": now_ist().strftime("%Y-%m-%d %H:%M:%S"),
-                "plan": constants.API_PLAN, "categories": cats}
+                "plan": constants.API_PLAN, "minute_breaches": self._minute_breaches,
+                "categories": cats}
 
     def _safe_write(self, snap: dict) -> None:
         try:
