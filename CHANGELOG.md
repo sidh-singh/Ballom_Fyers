@@ -7,6 +7,19 @@ Format: `YYYY-MM-DD` — change — _why_.
 
 ---
 
+## 2026-11-05 — Fix: "insufficient candles" — IST-aware history fetch + holiday-skip
+
+Root cause: `fetch_historical_data` used naive `datetime.now()` + naive `.timestamp()` for the
+request window while market hours are IST. On a non-IST host (demo/cloud boxes are usually UTC) the
+`range_from`/`range_to` epochs shifted by the 5h30m IST offset, so the window fell largely outside
+NSE/MCX trading hours and Fyers returned far fewer candles than the range implied — tripping
+"insufficient candles" (HAM needs ≥60 for SHA; the slope branches warn). It was worst in the early
+morning (the end_dt branch also flips to the previous close). Now `now = now_ist()` and every
+`datetime.combine(...)` is `tzinfo=IST` → correct UTC epochs on any server timezone (falls back to
+naive if tzdata is missing; unchanged on an IST host). Secondary: the worker now passes
+`ctx.holidays` + `ctx.special_sessions` to the fetch so the day-walk skips holidays (it was treating
+them as trading days and under-delivering after a holiday). All 6 branches.
+
 ## 2026-11-04 — Off-hours: no balance/positions API polling when markets are closed
 
 The supervisor polled `get_balance` + `positions` every 30 s all night (~2 read-API calls / 30 s for
