@@ -205,6 +205,8 @@ dashboard shows a plan badge + renewal countdown (renewal date is config, not AP
 `prime_renewal: "2027-11-04"`). Fyers exposes **no** account-type / subscription field in any API
 (`get_profile` returns identity + DDPI/MTF flags only) — so Prime is, and must be, config-driven.
 
+**Rate-limit detection + dashboard.** `api_meter` records every Fyers **-429** (per category: `rate_limited` + live `cooldown_s`, a `limited_today` count) and the running `minute_breaches`, and publishes them in `api_usage.json`. The dashboard's bottom **“API RATE LIMITS” panel** shows each category's sec / min / day usage vs the active plan's limit (amber ≥60 %, red ≥85 %) with a day bar, and flags **⛔ RATE-LIMITED · Ns** during a back-off or “N× limited today” after one — so a limit is visible, not silent. A single engine on **Prime** (500 DATA/min) won't hit this with per-bar caching; a -429 here means **another process is sharing the same Fyers account** (the per-account limit is global, but each process's `api_meter` only counts its own calls) **or** a strategy that books / re-enters very often (more scanner + option-leg fetches). Hedging books on a ₹ target so it cycles more than netting (which also needs both slopes to reverse) — hence it can surface the warning first.
+
 ---
 
 ## 8. Operational & tuning notes (data fetch, loop cadence)
