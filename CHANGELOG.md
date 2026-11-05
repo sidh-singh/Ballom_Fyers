@@ -7,6 +7,21 @@ Format: `YYYY-MM-DD` — change — _why_.
 
 ---
 
+## 2026-11-05 — API rate-limit detection + bottom-of-dashboard “API RATE LIMITS” panel
+
+`api_meter` now captures every Fyers **-429** — per category it exposes `rate_limited`, the live
+`cooldown_s` left on the back-off, and a `limited_today` count, plus the day's `minute_breaches` —
+all published in `api_usage.json`. The dashboard gains a **bottom panel** listing every API category
+(DATA / ORDER / USERINFO) with sec / min / day used-vs-limit (amber ≥60 %, red ≥85 %), a day bar, and
+a live status chip: **⛔ RATE-LIMITED · Ns** during a cooldown, “N× limited today” after a hit, else
+OK; a ⚠ MIN-BREACHES badge appears if >3. _Why: the hedging branch surfaced “You've reached API
+request limit for timeframe M15 for GoldM” while netting didn't — with one engine on Prime
+(500 DATA/min) and per-bar caching that shouldn't happen, so the likely cause is a second process on
+the same Fyers account (the per-account limit is global; each process's meter counts only its own
+calls) or hedging's higher book/re-enter frequency (more scanner + option-leg fetches). The panel
+makes any -429 visible instead of a silent log line._ All 6 branches (api_meter on all; dashboard
+HAM + slope).
+
 ## 2026-11-05 — Fix: "insufficient candles" — IST-aware history fetch + holiday-skip
 
 Root cause: `fetch_historical_data` used naive `datetime.now()` + naive `.timestamp()` for the
