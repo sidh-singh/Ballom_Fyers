@@ -225,6 +225,14 @@ not needed here.
 **History walk-back uses the right market close per asset:** **index 15:30** (3:30 PM NSE),
 **commodity 23:30** (11:30 PM MCX; 23:55 in summer DST — minor). Picked by `market_type`.
 
+**History fetch is IST-aware** — `fetch_historical_data` uses `now_ist()` and tags every datetime
+`tzinfo=IST`, so `range_from`/`range_to` are correct UTC epochs on **any** server timezone. (Before,
+naive `datetime.now()` + naive `.timestamp()` shifted the window by the 5h30m IST offset on a UTC
+host, dropping candles → "insufficient candles", worst in the morning.) The worker also passes
+**NSE holidays + special sessions** to the fetch so the day-walk skips them (no under-delivery after
+a holiday). If a fetch still comes back short, the strategy just degrades that timeframe's slope to
+neutral rather than trading on bad data.
+
 **Worker loop = ONE loop per symbol, not two.** Each worker thread does *fetch + trade* (~10 s of
 work on a bar boundary, ~1-2 s when cached) then idles `WORKER_IDLE_SLEEP = 15 s` → a ~15-25 s
 cycle. The timing print reads `[NIFTY] fetch+trade=.. / cycle=..` (one loop; cycle = work + idle).
