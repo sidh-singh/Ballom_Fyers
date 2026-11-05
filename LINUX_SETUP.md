@@ -1,69 +1,197 @@
-# Running on Linux (Debian 12 / 13) — `linux_fyers_live`
+# Running this bot on a Linux server (Debian 12 / 13) — `linux_fyers_live`
 
-Linux port of **`fyers_live`**. Trading logic is byte-identical to the Windows branch; only the
-OS-specific bits changed:
+Written for someone **new to Linux**. Every command is explained. If you can open a
+terminal (the black screen) on your server and type, you can do this.
 
-- **`constants.py` → `BALLOM_DIR` is OS-aware.** `$BALLOM_DIR` if set, else `~/Ballom_FYR` on Linux
-  (`C:/Ballom_FYR` on Windows). Token, cache and state all root off this one constant.
-- **Launchers:** `start_app.bat` / `start_dashboard.bat` → **`start_app.sh` / `start_dashboard.sh`**
-  (venv-based, Python 3.11).
+> **TL;DR** — copy-paste **one block** ([§2](#2-the-one-command-install)) and the bot installs
+> itself. Everything after that is "how to start it, watch it, and run more than one."
 
-## One-time setup
+---
+
+## 1. What you need
+
+- A **Debian 12 or 13** server you can log into over **SSH** (you bought this already).
+- The login command your host gave you, e.g. `ssh root@203.0.113.9` or `ssh youruser@yourserver`.
+  Run that on your own laptop first — you should land at a prompt like `user@server:~$`.
+
+That `~$` prompt is where every command below is typed.
+
+---
+
+## 2. The one-command install
+
+Copy-paste this **whole block** at the prompt and press Enter. It installs git, downloads the
+bot, and then runs `setup.sh`, which installs **everything else by itself** (uv, Python 3.11, all
+libraries, the data folder, and a background service):
+
 ```bash
-# Debian 13 (Trixie) system python is 3.13; this bot needs 3.11 (aiohttp pin). Get it via uv:
-sudo apt update && sudo apt install -y git curl
-curl -LsSf https://astral.sh/uv/install.sh | sh
-source $HOME/.local/bin/env
-uv python install 3.11
-# (Debian 12 instead: sudo apt install -y python3.11 python3.11-venv git  — skip uv)
-git clone <your-repo-url> ballom && cd ballom
-git checkout linux_fyers_live
-# optional: pick where state/token/cache live (default ~/Ballom_FYR); the run user must own it
-export BALLOM_DIR="$HOME/Ballom_FYR"
+sudo apt update && sudo apt install -y git
+git clone -b linux_fyers_live https://github.com/sidh-singh/Ballom_Fyers.git ~/ballom
+cd ~/ballom
+bash setup.sh
 ```
 
-## Run
+That's it. The script prints each step (`Step 1/6 ...`) so you can see progress. When it finishes
+it shows you the start/stop commands. **Nothing else to install by hand.**
+
+> If a command ever says `sudo: command not found`, you are already the **root** user — just
+> remove the word `sudo` from that command and run it again.
+
+---
+
+## 3. What those commands did (so you understand your server)
+
+| Command | What it does |
+|---|---|
+| `sudo apt update` | refreshes the list of installable software (`sudo` = "do this as administrator") |
+| `sudo apt install -y git` | installs **git**, the tool that downloads code (`-y` = "yes, don't ask") |
+| `git clone -b linux_fyers_live …` | downloads this branch of the bot into a folder `~/ballom` (`~` = your home folder) |
+| `cd ~/ballom` | "change directory" — moves you **into** that folder |
+| `bash setup.sh` | runs the installer script |
+
+Inside `setup.sh`, the 6 steps are: system packages → **uv** (fetches Python) → **Python 3.11** →
+your data folder → the Python libraries → the **background service**. Python 3.11 is required
+because the Fyers library doesn't work on Debian 13's built-in Python 3.13.
+
+---
+
+## 4. Start, stop, and watch the bot
+
+The installer set the bot up as a **service** — a program Linux keeps running for you in the
+background (it restarts itself if it crashes and comes back after a reboot).
+
+**Start the trading engine:**
 ```bash
-./start_app.sh              # engine — first run builds .venv and installs deps
-./start_dashboard.sh 8050   # dashboard (separate terminal) -> http://127.0.0.1:8050
+sudo systemctl start ballom-fyers_live
 ```
-First run of either script creates `.venv/` and installs `requirements_fyers.txt` (which already
-contains dash + plotly, so one venv serves both processes).
-
-## Why Python 3.11 (not 3.13)
-`fyers-apiv3==3.1.7` pins `aiohttp==3.8.4`, which has no 3.13 wheel and won't build on 3.13. **Debian 13 (Trixie) ships Python 3.13** as its system `python3` and has **no `python3.11` apt package**, so on Trixie we fetch a standalone 3.11 with `uv` (above). **Debian 12 (Bookworm)** has 3.11 natively (`sudo apt install -y python3.11 python3.11-venv`), so there `uv` isn't needed. The `.sh` launchers auto-detect whichever is present: explicit `$PYTHON` → `python3.11` on PATH → `uv python find/install 3.11`.
-
-## Unattended with systemd
-`/etc/systemd/system/ballom-linux_fyers_live.service` (edit `User=` and the two paths to match your box):
-```ini
-[Unit]
-Description=Ballom Fyers engine (linux_fyers_live)
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=ballom
-WorkingDirectory=/home/ballom/ballom
-Environment=BALLOM_DIR=/home/ballom/Ballom_FYR
-ExecStart=/home/ballom/ballom/.venv/bin/python -u application.py
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-```
+**Stop it:**
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now ballom-linux_fyers_live
-journalctl -u ballom-linux_fyers_live -f
+sudo systemctl stop ballom-fyers_live
 ```
-(Run the dashboard the same way with a second unit calling `dashboard.py`, or just launch it
-on demand with `./start_dashboard.sh`.)
+**Is it running?**
+```bash
+sudo systemctl status ballom-fyers_live
+```
+(Green `active (running)` = good. Press `q` to exit that screen.)
 
-## Security notes (this is a money bot)
-- Dedicated **non-root** user; `chmod 600` the token file under `$BALLOM_DIR`, lock down the repo dir
-  (the TOTP secret/PIN live in `fyers_auth.py`).
-- Dashboard binds to **127.0.0.1** — keep it local or behind an SSH tunnel; **never expose 8050**.
-- Keep the box patched (`unattended-upgrades`) and firewalled.
-- **Timezone:** the code is IST-aware (`now_ist()`), so a **UTC server is fine**; `tzdata` is pinned.
+**Watch what it's doing, live:**
+```bash
+journalctl -u ballom-fyers_live -f
+```
+(`-f` = "follow". Press **Ctrl-C** to stop watching — this does **not** stop the bot.)
+
+### LIVE vs DEMO — important
+- Instances ending in **`_live`** place **REAL orders** with real money once started and funded.
+  The installer never auto-starts the engine — **you** start it (the command above), and only when
+  you're ready.
+- Instances ending in **`_demo`** are a **simulation** — no real orders. Safe to start and leave
+  running to watch how it behaves.
+
+> First time on live? Start it **after** market hours once and watch `journalctl` to confirm it
+> logs in and fetches data cleanly, before a trading day.
+
+---
+
+## 5. View the dashboard (from your own laptop)
+
+The dashboard runs on the server at `http://127.0.0.1:8050`. `127.0.0.1` means "this machine
+only" — for safety it is **not** open to the internet. To see it from your laptop, make an **SSH
+tunnel**: run this **on your laptop** (not the server), using your normal login:
+
+```bash
+ssh -L 8050:127.0.0.1:8050 youruser@yourserver
+```
+
+Leave that window open, then first start the dashboard service **on the server**:
+```bash
+sudo systemctl start ballom-fyers_live-dash
+```
+Now open **`http://127.0.0.1:8050`** in your laptop's browser. The tunnel forwards it securely.
+
+---
+
+## 6. Where your data lives
+
+Everything this bot writes is under **one folder**, separate from the code:
+
+```
+~/ballom-trading/fyers_live/
+    state/              signal / account / api-usage JSON (what the dashboard reads)
+    cache/              downloaded symbol lists
+    fyers_token.json    your login token (keep it private!)
+    venv/               this bot's private Python + libraries
+```
+
+Lock the token down once: `chmod 600 ~/ballom-trading/fyers_live/fyers_token.json`.
+
+---
+
+## 7. Run MORE THAN ONE bot (live + demo, or future brokers)
+
+This is built to be safe. Each bot is an **instance** with its own data folder, its own Python
+env, its own dashboard port, and its own service name — so they **never interfere**.
+
+**Example — also run the demo alongside live:**
+```bash
+git clone -b linux_fyers_demo https://github.com/sidh-singh/Ballom_Fyers.git ~/ballom-demo
+cd ~/ballom-demo
+PORT=8051 bash setup.sh                 # give the demo a different dashboard port
+sudo systemctl start ballom-fyers_demo       # its own service, separate from live
+```
+Now `fyers_live` uses `~/ballom-trading/fyers_live/` on port 8050, and `fyers_demo` uses
+`~/ballom-trading/fyers_demo/` on port 8051 — zero overlap.
+
+**Future brokers in this same repo:** the instance name drives everything. A new broker just runs
+with its own `INSTANCE` (and, if its entry file differs, `ENGINE`):
+```bash
+INSTANCE=zerodha_live ENGINE=zerodha_app.py PORT=8052 bash setup.sh
+```
+It gets `~/ballom-trading/zerodha_live/`, port 8052, and service `ballom-zerodha_live` — fully
+isolated from Fyers. **Nothing you add later can clash with what's already running.**
+
+The knobs you can set before any command (all optional — sensible defaults otherwise):
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `INSTANCE` | the branch name (minus `linux_`) | the bot's unique name — drives data dir + service |
+| `PORT` | `8050` | dashboard port (use a different one per instance) |
+| `BALLOM_DIR` | `~/ballom-trading/<INSTANCE>` | where data/token/cache live |
+| `ENGINE` | `application.py` | the engine entry file (future brokers may differ) |
+| `PYTHON` | auto | force a specific Python 3.11 path |
+
+---
+
+## 8. Update the bot later
+
+```bash
+cd ~/ballom
+git pull
+bash setup.sh                                   # re-installs any new libraries
+sudo systemctl restart ballom-fyers_live        # pick up the new code
+```
+
+## 9. If something goes wrong
+
+| Symptom | Fix |
+|---|---|
+| `setup.sh` can't find Python 3.11 | re-run `bash setup.sh` — it installs it via `uv`. Or: `uv python install 3.11`. |
+| `sudo: command not found` | you're root already — drop `sudo` from the command. |
+| service won't start | `journalctl -u ballom-fyers_live -n 50` shows the last 50 log lines with the error. |
+| `bad interpreter` on a `.sh` | the file got Windows line-endings; run `sed -i 's/\r$//' *.sh scripts/*.sh`. |
+| dashboard won't load | make sure the SSH tunnel ([§5](#5-view-the-dashboard-from-your-own-laptop)) is open and the `-dash` service is started. |
+
+## 10. Security (it's a money bot)
+
+- Use a **dedicated non-root user** if you can; `chmod 600` the token file.
+- The dashboard stays on `127.0.0.1` — reach it **only** through the SSH tunnel. Never open port
+  8050 to the internet.
+- Keep the server patched: `sudo apt update && sudo apt upgrade -y` occasionally.
+- The TOTP secret / PIN live in `fyers_auth.py`, so keep the repo folder private.
+
+---
+
+### Why Python 3.11 (not 3.13)
+`fyers-apiv3==3.1.7` pins `aiohttp==3.8.4`, which has **no wheel for Python 3.13** and won't build
+there. Debian 13 (Trixie) ships Python 3.13 and has **no `python3.11` apt package**, so `setup.sh`
+fetches a standalone 3.11 with **`uv`**. Debian 12 (Bookworm) has 3.11 natively. The scripts
+auto-detect whichever is present (`$PYTHON` → `python3.11` → uv).

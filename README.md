@@ -1,47 +1,57 @@
 # Ballom_Fyers
 AlgoTrading Project
 
-## 🐧 Running on Linux (Debian 12 "Bookworm")
+## 🐧 Run on a Linux server (Debian 12 / 13) — `linux_fyers_live`
 
-This is the **`linux_fyers_live`** branch — the Debian 12 / 13 Linux port. Trading logic is identical to the
-Windows branch; only the state path and launchers differ. Full guide (systemd auto-start + security
-hardening): see **[`LINUX_SETUP.md`](LINUX_SETUP.md)**.
+This is the **Linux** branch. Trading logic is identical to the Windows branch; only the launchers
+and the data path differ. **New to Linux? Follow [`LINUX_SETUP.md`](LINUX_SETUP.md)** — it explains
+every command.
 
-**1. Install Python 3.11 + git.** Your server is **Debian 13 (Trixie)**, whose system Python is 3.13 — and this bot needs **3.11** (`fyers-apiv3`'s `aiohttp` pin has no 3.13 wheel). Debian 13 has no `python3.11` package, so fetch a standalone one with [`uv`](https://docs.astral.sh/uv/):
+### One-command install
+
+Log into your server over SSH, then paste this **one block**:
+
 ```bash
-sudo apt update && sudo apt install -y git curl
-curl -LsSf https://astral.sh/uv/install.sh | sh     # install uv (standalone Python manager)
-source $HOME/.local/bin/env                          # put uv on PATH (or open a new shell)
-uv python install 3.11                               # downloads a prebuilt CPython 3.11
-```
-> On **Debian 12** instead, 3.11 is native — `sudo apt install -y python3.11 python3.11-venv git` and skip uv. The launchers auto-detect whichever you have.
-
-**2. Clone the repo and check out this branch:**
-```bash
-git clone https://github.com/sidh-singh/Ballom_Fyers.git ballom && cd ballom
-git checkout linux_fyers_live
+sudo apt update && sudo apt install -y git
+git clone -b linux_fyers_live https://github.com/sidh-singh/Ballom_Fyers.git ~/ballom
+cd ~/ballom
+bash setup.sh
 ```
 
-**3. (Optional) Choose where state/token/cache live** — defaults to `~/Ballom_FYR`; the run user must own it:
+`setup.sh` installs **everything by itself** — `uv`, Python 3.11, all libraries, the data folder,
+and a background service. When it finishes it prints the start/stop commands.
+
+### Start / stop / watch
+
 ```bash
-export BALLOM_DIR="$HOME/Ballom_FYR"      # or e.g. /opt/ballom_fyr
+sudo systemctl start   ballom-fyers_live        # start the trading engine
+sudo systemctl stop    ballom-fyers_live        # stop it
+journalctl -u ballom-fyers_live -f              # watch live logs (Ctrl-C to quit)
+sudo systemctl start   ballom-fyers_live-dash   # start the dashboard (port 8050)
 ```
 
-**4. Start the engine** — the first run auto-creates `.venv/` and installs all dependencies:
-```bash
-./start_app.sh
-```
+> **`*_live` instances place real orders** once funded; **`*_demo` instances simulate** (no real
+> orders). The engine is never auto-started — you start it with the command above when ready.
 
-**5. Start the dashboard** in a second terminal (read-only; binds to 127.0.0.1 only):
-```bash
-./start_dashboard.sh 8050      # then open http://127.0.0.1:8050
-```
+Prefer the foreground (Ctrl-C to stop)? `./start_app.sh` (engine) and `./start_dashboard.sh`
+(dashboard).
 
-> ⚠ **Debian 13 (Trixie) ships Python 3.13 — but this bot needs 3.11** (`fyers-apiv3`'s `aiohttp` pin has no 3.13 wheel). The `uv` step above provides a standalone 3.11; the `.sh` launchers auto-detect it (`$PYTHON` → `python3.11` → uv).
->
-> **Run it 24×5** with `systemd` (auto-restart across the trading day + the ~00:10 daily reauth) —
-> ready-to-edit unit file + security notes (`chmod 600` the token, keep the dashboard on localhost)
-> are in [`LINUX_SETUP.md`](LINUX_SETUP.md).
+### Viewing the dashboard
+It binds to `127.0.0.1` only (not the internet). From your laptop, open an SSH tunnel then browse
+`http://127.0.0.1:8050` — see [`LINUX_SETUP.md` §5](LINUX_SETUP.md).
 
----
+### Running more than one bot (live + demo, or future brokers)
+Every bot is an isolated **instance** (own data folder, venv, port, service) — they never clash.
+See [`LINUX_SETUP.md` §7](LINUX_SETUP.md). Example: `PORT=8051 bash setup.sh` for a second one.
 
+> ⚠ **Python 3.11 required — not 3.13.** Debian 13's system Python is 3.13; `setup.sh` fetches 3.11
+> via `uv` automatically. (`fyers-apiv3`'s `aiohttp` pin has no 3.13 wheel.)
+
+### Files
+| File | Purpose |
+|---|---|
+| `setup.sh` | one-command installer (run this first) |
+| `start_app.sh` / `start_dashboard.sh` | run engine / dashboard in the foreground |
+| `install-service.sh` | (re)install the background systemd services |
+| `scripts/common.sh` | shared config — namespaces every bot by instance |
+| `LINUX_SETUP.md` | full beginner guide |
