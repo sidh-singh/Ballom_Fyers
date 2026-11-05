@@ -255,7 +255,8 @@ class SymbolWorker(threading.Thread):
     def _index_candles(self):
         try:
             return self.ctx.api.fetch_historical_data(
-                self._active_underlying, SHA_TIMEFRAME, SHA_CANDLE_COUNT, market_type=self.asset_type)
+                self._active_underlying, SHA_TIMEFRAME, SHA_CANDLE_COUNT, market_type=self.asset_type,
+                holidays=self.ctx.holidays, special_sessions=self.ctx.special_sessions)
         except Exception as e:
             logger.warning("[%s] index candle fetch failed: %s", self.symbol, e)
             return None
@@ -367,7 +368,8 @@ class SymbolWorker(threading.Thread):
             res, resample = "60", "6h"
         try:
             df = self.ctx.api.fetch_historical_data(
-                self._active_underlying, res, RSI_CANDLE_COUNT, market_type=self.asset_type)
+                self._active_underlying, res, RSI_CANDLE_COUNT, market_type=self.asset_type,
+                holidays=self.ctx.holidays, special_sessions=self.ctx.special_sessions)
             if resample is not None:
                 df = self._resample(df, resample)
             rsi = self.indicator.calculate_rsi(df["Close"], RSI_LENGTH, RSI_MA_TYPE)
