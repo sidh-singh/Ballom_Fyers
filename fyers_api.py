@@ -30,7 +30,7 @@ from fyers_auth import FyersAuth
 from api_meter import meter
 from constants import (
     CACHE_DIR, SYMBOLS_COLS, MIN_CANDLES_FOR_ANALYSIS, PRODUCT_TYPE,
-    BALANCE_SOURCE_TITLES, MCX_COM_URL,
+    BALANCE_SOURCE_TITLES, MCX_COM_URL, now_ist, IST,
 )
 
 warnings.filterwarnings("ignore")
@@ -825,8 +825,11 @@ class FyersAPI:
                 d = d - timedelta(days=1)
             return d
 
-        # determine end_dt
-        now = datetime.now()
+        # determine end_dt — IST-AWARE. Market hours are IST, so `now` and every combined
+        # datetime must be IST-aware; otherwise range_from/range_to epochs (below) are computed
+        # in the host's local timezone and shift by the IST offset on a non-IST server (e.g. a
+        # UTC cloud box), which drops candles — worst in the morning ("insufficient candles").
+        now = now_ist()
         today_d = now.date()
         current_time = now.time()
         today_open, today_close = _market_times(today_d)
@@ -834,9 +837,9 @@ class FyersAPI:
         if not _is_trading_day(today_d) or current_time < today_open:
             ltd = _prev_trading_day(today_d)
             _, ltd_close = _market_times(ltd)
-            end_dt = datetime.combine(ltd, ltd_close)
+            end_dt = datetime.combine(ltd, ltd_close, tzinfo=IST)
         elif current_time > today_close:
-            end_dt = datetime.combine(today_d, today_close)
+            end_dt = datetime.combine(today_d, today_close, tzinfo=IST)
         else:
             end_dt = now
 
@@ -849,7 +852,7 @@ class FyersAPI:
             if start_dt.time() < day_open:
                 prev_d = _prev_trading_day(start_dt.date())
                 _, prev_close = _market_times(prev_d)
-                start_dt = datetime.combine(prev_d, prev_close)
+                start_dt = datetime.combine(prev_d, prev_close, tzinfo=IST)
             candles_remaining -= 1
 
         # Fyers caps a single history request's date range: 100 days for intraday (1m–240m),
