@@ -31,19 +31,21 @@ from plotly.subplots import make_subplots
 
 from constants import (
     STATE_DIR, API_USAGE_FILE, APP_STATUS_FILE, STRATEGY_LOG_DIR,
-    SIGNAL_STATE_FILE, ACCOUNT_STATE_FILE, API_LIMITS, API_LIMITS_PRIME,
+    SIGNAL_STATE_FILE, ACCOUNT_STATE_FILE, OHLC_STATE_FILE, API_LIMITS, API_LIMITS_PRIME,
     RSI_OVERSOLD, RSI_OVERBOUGHT, RSI_DCA_LADDER_TIMEFRAMES, now_ist,
 )
 
 PROFIT_HISTORY = STATE_DIR / "profit_history.json"
 REFRESH_MS = 5000
 IS_DEMO = False  # fyers_live (real trading)
+SHOW_AVG_POSITION = False  # HAM is not netting — no averaged-position overlay
 
 C = {
     "bg": "#0a0e17", "card": "#141a28", "card2": "#1a2133", "border": "#232c42",
     "text": "#e6e9f2", "dim": "#93a0bd", "muted": "#5b6680",
     "green": "#22c55e", "red": "#ef4444", "grey": "#6b7280",
     "amber": "#f59e0b", "purple": "#a78bfa", "blue": "#60a5fa", "teal": "#2dd4bf",
+    "orange": "#fb923c", "yellow": "#facc15",
     "grid": "rgba(140,150,180,0.08)",
 }
 RSI_ORDER = ["TIMEFRAME_M1", "TIMEFRAME_M5", "TIMEFRAME_M15", "TIMEFRAME_M30",
@@ -440,7 +442,7 @@ def _position_block(pos):
                                  "flexWrap": "wrap"})
 
 
-def symbol_panel(symbol, s, closes):
+def symbol_panel(symbol, s, closes, oh=None, events=None, show_avg=False):
     sig = s.get("signal", "DO_NOTHING")
     rsi_blocked = s.get("rsi_blocked")
     head = html.Div([
@@ -482,7 +484,10 @@ def symbol_panel(symbol, s, closes):
                   "fontWeight": "800", "marginLeft": "10px"}),
     ], style={"padding": "4px 10px 2px"})
     right = _card([booked_line, booking_chart(symbol, closes)], pad="8px", extra={"flex": "1.4"})
-    return html.Div([left, right], style={"display": "flex", "gap": "14px", "marginBottom": "14px"})
+    info_row = html.Div([left, right], style={"display": "flex", "gap": "14px"})
+    price_card = _card([ohlc_chart(symbol, oh, events or [], show_avg)], pad="6px 8px",
+                       extra={"marginTop": "12px"})
+    return html.Div([info_row, price_card], style={"marginBottom": "18px"})
 
 
 # ── per-asset P/L booking chart ──────────────────────────────────────────────
@@ -532,6 +537,127 @@ def booking_chart(asset, closes):
     for ann in fig["layout"]["annotations"]:
         ann["font"] = dict(size=11, color=C["dim"])
     return dcc.Graph(figure=fig, config={"displayModeBar": False})
+
+
+# ── OHLC price chart with your open/close fills marked ───────────────────────
+def _parse_cycles(events):
+    """Group ordered leg events (ENTRY / MARTINGALE / CLOSE) into position cycles:
+    [{entries: [{t, price, avg, action}], close: {t, price, pnl} | None}]."""
+    cycles, cur = [], None
+    for e in events:
+        act = e.get("action")
+        t = str(e.get("timestamp", ""))[:19]
+        price = float(e.get("ltp", 0) or 0)
+        avg = float(e.get("avg_price", price) or price)
+        if act in ("ENTRY", "MARTINGALE"):
+            if cur is None:
+                cur = {"entries": [], "close": None}
+            cur["entries"].append({"t": t, "price": price, "avg": avg, "action": act})
+        elif act == "CLOSE":
+            if cur is None:
+                cur = {"entries": [], "close": None}
+            cur["close"] = {"t": t, "price": price, "pnl": float(e.get("net_pl", 0) or 0)}
+            cycles.append(cur)
+            cur = None
+    if cur is not None:
+        cycles.append(cur)
+    return cycles
+
+
+def ohlc_chart(symbol, oh, events, show_avg):
+    """Candlesticks of the active option leg (its ₹ premium) with YOUR fills overlaid:
+    OPEN (green ▲), each OB/OS ADD (green ●), CLOSE (red ▼); a dotted connector per
+    position to the close/now (green = profit, red = loss); a recessive dashed line at the
+    booked average price while open. Netting also gets the averaged position: blue ◆ open,
+    orange ◆ close, yellow dotted line between."""
+    oh = oh or {}
+    t = oh.get("t") or []
+    if not t:
+        return html.Div(
+            f"{symbol}: price chart appears once the engine has fetched candles "
+            f"(during market hours, with the engine running).",
+            style={"color": C["muted"], "padding": "44px", "textAlign": "center", "fontSize": "12px"})
+    leg, side, active = oh.get("leg", ""), oh.get("side", ""), bool(oh.get("active"))
+    o, h, l, c = oh.get("o", []), oh.get("h", []), oh.get("l", []), oh.get("c", [])
+    fig = go.Figure()
+    fig.add_trace(go.Candlestick(
+        x=t, open=o, high=h, low=l, close=c, name="price",
+        increasing=dict(line=dict(color="rgba(45,212,191,0.6)", width=1), fillcolor="rgba(45,212,191,0.20)"),
+        decreasing=dict(line=dict(color="rgba(148,160,189,0.6)", width=1), fillcolor="rgba(148,160,189,0.14)"),
+        showlegend=False))
+    now_t = t[-1]
+    now_px = float(c[-1]) if c else 0.0
+
+    opens_x, opens_y, opens_h = [], [], []
+    adds_x, adds_y, adds_h = [], [], []
+    closes_x, closes_y, closes_h = [], [], []
+    avg_ox, avg_oy, avg_oh_ = [], [], []
+    avg_cx, avg_cy, avg_ch_ = [], [], []
+    shown = {"entry": False, "avg": False}
+    for cyc in _parse_cycles(events):
+        ents = cyc["entries"]
+        cl = cyc["close"]
+        if not ents:
+            continue
+        avg_entry = ents[-1]["avg"]
+        first_t = ents[0]["t"]
+        if cl:
+            end_t, end_px, pnl = cl["t"], cl["price"], cl["pnl"]
+        else:
+            end_t, end_px, pnl = now_t, now_px, now_px - avg_entry
+        col = C["green"] if pnl >= 0 else C["red"]
+        for en in ents:
+            if en["action"] == "ENTRY":
+                opens_x.append(en["t"]); opens_y.append(en["price"])
+                opens_h.append(f"OPEN {side}<br>{en['t'][11:]}<br>₹{en['price']:.2f}")
+            else:
+                adds_x.append(en["t"]); adds_y.append(en["price"])
+                adds_h.append(f"ADD {side}<br>{en['t'][11:]}<br>₹{en['price']:.2f}")
+            fig.add_trace(go.Scatter(x=[en["t"], end_t], y=[en["price"], end_px], mode="lines",
+                                     line=dict(color=col, width=1.3, dash="dot"), opacity=0.75,
+                                     hoverinfo="skip", showlegend=False))
+        fig.add_trace(go.Scatter(x=[first_t, end_t], y=[avg_entry, avg_entry], mode="lines",
+                                 line=dict(color=C["dim"], width=1, dash="dash"), opacity=0.45,
+                                 name="booked price", legendgroup="entry",
+                                 showlegend=not shown["entry"], hoverinfo="skip"))
+        shown["entry"] = True
+        if cl:
+            closes_x.append(cl["t"]); closes_y.append(cl["price"])
+            closes_h.append(f"CLOSE {side}<br>{cl['t'][11:]}<br>₹{cl['price']:.2f}<br><b>net ₹{pnl:,.2f}</b>")
+        if show_avg:
+            fig.add_trace(go.Scatter(x=[first_t, end_t], y=[avg_entry, end_px], mode="lines",
+                                     line=dict(color=C["yellow"], width=2, dash="dot"), opacity=0.9,
+                                     name="avg position", legendgroup="avg",
+                                     showlegend=not shown["avg"], hoverinfo="skip"))
+            shown["avg"] = True
+            avg_ox.append(first_t); avg_oy.append(avg_entry); avg_oh_.append(f"avg open ₹{avg_entry:.2f}")
+            if cl:
+                avg_cx.append(cl["t"]); avg_cy.append(cl["price"]); avg_ch_.append(f"avg close ₹{cl['price']:.2f}")
+
+    def _mk(x, y, hov, color, mark, name, size=12):
+        if x:
+            fig.add_trace(go.Scatter(x=x, y=y, mode="markers", name=name, text=hov, hoverinfo="text",
+                marker=dict(color=color, size=size, symbol=mark, line=dict(width=1.5, color=C["bg"]))))
+    _mk(opens_x, opens_y, opens_h, C["green"], "triangle-up", "open")
+    _mk(adds_x, adds_y, adds_h, C["green"], "circle", "OB/OS add", 8)
+    _mk(closes_x, closes_y, closes_h, C["red"], "triangle-down", "close")
+    if show_avg:
+        _mk(avg_ox, avg_oy, avg_oh_, C["blue"], "diamond", "avg open", 11)
+        _mk(avg_cx, avg_cy, avg_ch_, C["orange"], "diamond", "avg close", 11)
+
+    tag = "live position" if active else ("last trade (flat)" if side else "index — flat")
+    title = f"{symbol} — {leg or 'index'}   ·   {tag}"
+    fig.update_layout(height=430, margin=dict(l=48, r=16, t=30, b=26),
+                      paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                      font=dict(color=C["dim"], size=10), hovermode="closest",
+                      title=dict(text=title, font=dict(size=12, color=C["dim"]), x=0.01, y=0.98),
+                      xaxis_rangeslider_visible=False,
+                      legend=dict(orientation="h", yanchor="bottom", y=1.015, xanchor="right", x=1,
+                                  font=dict(size=9, color=C["dim"]), bgcolor="rgba(0,0,0,0)"))
+    fig.update_xaxes(showgrid=False, tickfont=dict(size=8, color=C["muted"]), nticks=14)
+    fig.update_yaxes(showgrid=True, gridcolor=C["grid"], tickfont=dict(size=9, color=C["muted"]),
+                     title=dict(text=("premium ₹" if side else "price ₹"), font=dict(size=9, color=C["muted"])))
+    return dcc.Graph(figure=fig, config={"displayModeBar": False}, style={"width": "100%"})
 
 
 # ── status + log ─────────────────────────────────────────────────────────────
@@ -662,12 +788,27 @@ app.layout = html.Div([
 def _refresh(_):
     signals = _read(SIGNAL_STATE_FILE, {}) or {}
     hist = _read(PROFIT_HISTORY, []) or []
+    ohlc = _read(OHLC_STATE_FILE, {}) or {}
     today = now_ist().date().isoformat()
     closes_by_asset = defaultdict(list)
+    events_by_leg = defaultdict(list)
     for r in hist:
-        if r.get("action") == "CLOSE" and r.get("date") == today:
+        if r.get("date") != today:
+            continue
+        act = r.get("action")
+        if act == "CLOSE":
             closes_by_asset[_asset_of(r.get("symbol", ""))].append(r)
-    panels = [symbol_panel(sym, s, closes_by_asset.get(sym, []))
+        if act in ("ENTRY", "MARTINGALE", "CLOSE"):
+            events_by_leg[r.get("symbol", "")].append(r)
+    for leg in events_by_leg:
+        events_by_leg[leg].sort(key=lambda e: e.get("timestamp", ""))
+
+    def _events_for(sym):
+        leg = (ohlc.get(sym) or {}).get("leg", "")
+        return events_by_leg.get(leg, [])
+
+    panels = [symbol_panel(sym, s, closes_by_asset.get(sym, []),
+                           ohlc.get(sym), _events_for(sym), SHOW_AVG_POSITION)
               for sym, s in signals.items() if isinstance(s, dict)]
     if not panels:
         panels = [html.Div("Waiting for engine signals…", style={
