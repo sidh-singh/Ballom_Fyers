@@ -202,6 +202,19 @@ Times are IST. **All datetime logic must be timezone-aware (IST)** — the old
 code used naive `datetime.now()`, which silently breaks on non-IST hosts; the
 redirect URI (`jenkin.…`) suggests a server, so this is a real risk to fix.
 
+**Special sessions — Diwali Muhurat & weekend Union-Budget.** Some NSE days are
+closed on the weekend/holiday calendar yet trade at non-standard hours.
+`FyersAPI._known_special_sessions(year)` yields `{date, name, open, close,
+asset_type}` for these: Muhurat from a hand-maintained per-year table
+(`_MUHURAT_SESSIONS` — the date **and** time change yearly per the NSE circular, so
+**update it every year**; a missing year yields no session), plus a Union-Budget
+session when Feb 1 falls on a weekend (Sat or Sun → 09:15–15:30). `is_trading_day`
+treats those dates as open; `_in_window` then trades **only** inside the session
+window and **only** for the matching `asset_type` (INDEX), so MCX legs stay flat
+during an NSE-only Muhurat. These sessions are code-defined (not from the NSE API),
+so `fetch_trading_holidays` re-derives them on every holiday-cache read — a stale
+`trading_holidays_YYYY.json` can never serve an outdated Muhurat date/time.
+
 ---
 
 ## 8. State files & paths
