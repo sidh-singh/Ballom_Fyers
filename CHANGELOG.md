@@ -1,5 +1,9 @@
 # CHANGELOG — `fyers_live` / `fyers_demo`
 
+## 2026-11-06 — start.sh auto-pulls latest code (fast-forward, config-safe)
+
+`./start.sh` now runs `git pull --ff-only` (no credential prompt, never a merge mess) before starting, so the bot always launches the latest code. If a tracked file was edited locally (e.g. `symbols.json`) the pull skips with a warning and starts with current code — your config is never clobbered. If the pull changes `requirements_fyers.txt`, the venv libraries are refreshed automatically. Skip for one run with `NO_PULL=1 ./start.sh`. LINUX_SETUP.md section 8 updated (`./stop.sh && ./start.sh` to apply an update). 6 `linux_` branches. _Why: owner wanted `./start.sh` to always run the latest code without a separate git pull step._
+
 ## 2026-11-06 — Worker loop idle 15s -> 8s (faster LTP-based profit-booking)
 
 `WORKER_IDLE_SLEEP` reduced 15 -> 8 in `constants.py`. Entries are unaffected (RSI/MACD/SHA signals are computed on 5m/15m/H4 candles and only change on a new bar), so this only speeds up the **LTP-based profit-booking / force-close reaction** from ~15-25s to ~8-10s. Safe for a single bot on Prime (well under 500 DATA/min with per-bar caching); keep >=15 if several bots share one Fyers account (shared per-account rate limit). Not set to 0 — the `api_meter` would then throttle the loop anyway while spinning CPU on cached recompute, with no entry benefit and a -429 / daily-block risk. `SUPERVISOR_TICK` (30s account/maintenance poll) unchanged. All 12 branches. _Why: owner wanted less delay; this trims the only latency that matters (profit exits) without hammering the API._
