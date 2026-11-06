@@ -7,6 +7,12 @@ Format: `YYYY-MM-DD` — change — _why_.
 
 ---
 
+## 2026-11-06 — Per-symbol OHLC price chart with your open/close fills marked
+
+New full-width candlestick chart per symbol, plotting the ACTIVE option-leg premium (the instrument you trade) so fills line up on the price axis. From profit_history.json: OPEN (green up-triangle), each OB/OS ADD (green dot), CLOSE (red down-triangle); a dotted connector per position to the close/now coloured by P/L (green profit / red loss); a recessive dashed line at the booked average price while open. **Netting branches** also draw the averaged position — blue diamond open, orange diamond close, yellow dotted line between (gated by SHOW_AVG_POSITION). Recessive teal/slate candles keep the bright fills the focus; hover shows each fill's time/price/net.
+
+Engine: new OHLC_STATE_FILE + state_writer.write_ohlc_state persist the active leg's last ~96 M5 candles; symbol_worker._persist_ohlc uses the active leg while open, the last-traded leg through the session, else the index. RSI+MACD reuses the per-bar _frame cache (no extra API); HAM adds a small per-bar leg-candle cache. All 12 branches. _Why: owner asked to see the price action with their entries / exits / averages marked, full-width, per symbol._
+
 ## 2026-11-06 — Port convention for future brokers: unregistered instance auto-takes next free port
 
 `scripts/common.sh` now defines `_NEXT_FREE_PORT` (8056) — an instance with no explicit `case` entry automatically boots on the next free port instead of colliding on 8050. LINUX_SETUP.md gains an "Adding a NEW broker" section: a new broker branch takes the next sequential dashboard port (n+1 above the current max; 8056, 8057, ...), registered in the `case` + `_NEXT_FREE_PORT` bump; never reuse 8050-8055. Includes an explicit note telling an AI assistant to apply the rule automatically. 6 `linux_` branches. _Why: owner will add more brokers later (with Claude's help) and wants the port convention followed even if unmentioned._
