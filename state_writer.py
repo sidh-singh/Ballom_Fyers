@@ -26,7 +26,7 @@ from constants import (
 
 _signal_lock = threading.Lock()   # serialise per-symbol signal_state read-merge-write
 _ohlc_lock = threading.Lock()     # serialise per-symbol ohlc_state read-merge-write
-_OHLC_MAX_BARS = 96               # ~1 session of M5 candles kept for the price chart
+_OHLC_MAX_BARS = 220              # a full session of M5 candles (NSE ~75, MCX ~175) for the price chart
 
 _MAX_LOG_ENTRIES = 500
 _MAX_LOG_DAYS = 14

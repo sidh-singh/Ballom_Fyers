@@ -1,5 +1,9 @@
 # CHANGELOG — `fyers_live` / `fyers_demo`
 
+## 2026-11-06 — OHLC chart: IST-align candles, current-day only, redesigned to "Show Trades" style
+
+Fixes + redesign of the per-symbol price chart. (1) **Time-alignment bug:** Fyers candle timestamps are naive-UTC (`pd.to_datetime(epoch, unit='s')`) while fills are IST — markers floated 5h30m off the price. `symbol_worker._persist_ohlc` now tz-converts candles to IST so fills land on the exact bar. (2) Scope to the **current day only** (IST). (3) Chart redesigned to the reference: recessive grey OHLC bars; each trade at its exact time & price — ENTRY/ADD hollow circle (CE blue / PE orange), CLOSE filled circle (green profit / red loss), dotted line entry->exit, green/red P/L label; netting keeps the averaged position (yellow dotted, blue/orange diamonds). State cap -> 220 M5 bars. Verified marker coordinates land within the candle timeline. fyers_netting_demo + fyers_hedging_demo first. _Why: owner reported the chart looked wrong and markers were not on the time the position was taken._
+
 ## 2026-11-06 — Per-symbol OHLC price chart with your open/close fills marked
 
 New full-width candlestick chart per symbol, plotting the ACTIVE option-leg premium (the instrument you trade) so fills line up on the price axis. From profit_history.json: OPEN (green up-triangle), each OB/OS ADD (green dot), CLOSE (red down-triangle); a dotted connector per position to the close/now coloured by P/L (green profit / red loss); a recessive dashed line at the booked average price while open. **Netting branches** also draw the averaged position — blue diamond open, orange diamond close, yellow dotted line between (gated by SHOW_AVG_POSITION). Recessive teal/slate candles keep the bright fills the focus; hover shows each fill's time/price/net.

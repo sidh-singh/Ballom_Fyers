@@ -596,7 +596,7 @@ def booking_chart(asset, closes):
     return dcc.Graph(figure=fig, config={"displayModeBar": False})
 
 
-# ── OHLC price chart with your open/close fills marked ───────────────────────
+# ── OHLC price chart with your trade history marked (ref: "Show Trades") ──────
 def _parse_cycles(events):
     """Group ordered leg events (ENTRY / MARTINGALE / CLOSE) into position cycles:
     [{entries: [{t, price, avg, action}], close: {t, price, pnl} | None}]."""
@@ -622,98 +622,79 @@ def _parse_cycles(events):
 
 
 def ohlc_chart(symbol, oh, events, show_avg):
-    """Candlesticks of the active option leg (its ₹ premium) with YOUR fills overlaid:
-    OPEN (green ▲), each OB/OS ADD (green ●), CLOSE (red ▼); a dotted connector per
-    position to the close/now (green = profit, red = loss); a recessive dashed line at the
-    booked average price while open. Netting also gets the averaged position: blue ◆ open,
-    orange ◆ close, yellow dotted line between."""
+    """Today's 5-min OHLC of the active option-leg premium, with each trade drawn at its exact
+    time & price: ENTRY/ADD = hollow circle (CE blue / PE orange), CLOSE = filled circle (green
+    profit / red loss), a dotted line entry->exit, and a green/red P/L label. Netting also draws the
+    averaged position (yellow dotted, blue/orange diamonds)."""
     oh = oh or {}
     t = oh.get("t") or []
     if not t:
         return html.Div(
-            f"{symbol}: price chart appears once the engine has fetched candles "
-            f"(during market hours, with the engine running).",
-            style={"color": C["muted"], "padding": "44px", "textAlign": "center", "fontSize": "12px"})
+            f"{symbol}: price chart appears once the engine has fetched today's candles "
+            f"(market hours, engine running).",
+            style={"color": C["muted"], "padding": "46px", "textAlign": "center", "fontSize": "12px"})
     leg, side, active = oh.get("leg", ""), oh.get("side", ""), bool(oh.get("active"))
     o, h, l, c = oh.get("o", []), oh.get("h", []), oh.get("l", []), oh.get("c", [])
+    ecol = C["orange"] if side == "PE" else C["blue"]
     fig = go.Figure()
-    fig.add_trace(go.Candlestick(
+    fig.add_trace(go.Ohlc(
         x=t, open=o, high=h, low=l, close=c, name="price",
-        increasing=dict(line=dict(color="rgba(45,212,191,0.6)", width=1), fillcolor="rgba(45,212,191,0.20)"),
-        decreasing=dict(line=dict(color="rgba(148,160,189,0.6)", width=1), fillcolor="rgba(148,160,189,0.14)"),
-        showlegend=False))
-    now_t = t[-1]
-    now_px = float(c[-1]) if c else 0.0
+        increasing=dict(line=dict(color="rgba(147,160,189,0.7)", width=1)),
+        decreasing=dict(line=dict(color="rgba(91,102,128,0.85)", width=1)),
+        showlegend=False, hoverinfo="skip"))
+    now_t, now_px = t[-1], (float(c[-1]) if c else 0.0)
 
-    opens_x, opens_y, opens_h = [], [], []
-    adds_x, adds_y, adds_h = [], [], []
-    closes_x, closes_y, closes_h = [], [], []
-    avg_ox, avg_oy, avg_oh_ = [], [], []
-    avg_cx, avg_cy, avg_ch_ = [], [], []
-    shown = {"entry": False, "avg": False}
+    ann = []
     for cyc in _parse_cycles(events):
-        ents = cyc["entries"]
-        cl = cyc["close"]
+        ents, cl = cyc["entries"], cyc["close"]
         if not ents:
             continue
-        avg_entry = ents[-1]["avg"]
-        first_t = ents[0]["t"]
+        avg_entry, first_t = ents[-1]["avg"], ents[0]["t"]
         if cl:
-            end_t, end_px, pnl = cl["t"], cl["price"], cl["pnl"]
+            end_t, end_px, pnl, closed = cl["t"], cl["price"], cl["pnl"], True
         else:
-            end_t, end_px, pnl = now_t, now_px, now_px - avg_entry
-        col = C["green"] if pnl >= 0 else C["red"]
-        for en in ents:
-            if en["action"] == "ENTRY":
-                opens_x.append(en["t"]); opens_y.append(en["price"])
-                opens_h.append(f"OPEN {side}<br>{en['t'][11:]}<br>₹{en['price']:.2f}")
-            else:
-                adds_x.append(en["t"]); adds_y.append(en["price"])
-                adds_h.append(f"ADD {side}<br>{en['t'][11:]}<br>₹{en['price']:.2f}")
+            end_t, end_px, pnl, closed = now_t, now_px, now_px - avg_entry, False
+        pcol = C["green"] if pnl >= 0 else C["red"]
+        for en in ents:                                  # dotted connector entry -> exit/now
             fig.add_trace(go.Scatter(x=[en["t"], end_t], y=[en["price"], end_px], mode="lines",
-                                     line=dict(color=col, width=1.3, dash="dot"), opacity=0.75,
-                                     hoverinfo="skip", showlegend=False))
-        fig.add_trace(go.Scatter(x=[first_t, end_t], y=[avg_entry, avg_entry], mode="lines",
-                                 line=dict(color=C["dim"], width=1, dash="dash"), opacity=0.45,
-                                 name="booked price", legendgroup="entry",
-                                 showlegend=not shown["entry"], hoverinfo="skip"))
-        shown["entry"] = True
-        if cl:
-            closes_x.append(cl["t"]); closes_y.append(cl["price"])
-            closes_h.append(f"CLOSE {side}<br>{cl['t'][11:]}<br>₹{cl['price']:.2f}<br><b>net ₹{pnl:,.2f}</b>")
-        if show_avg:
-            fig.add_trace(go.Scatter(x=[first_t, end_t], y=[avg_entry, end_px], mode="lines",
-                                     line=dict(color=C["yellow"], width=2, dash="dot"), opacity=0.9,
-                                     name="avg position", legendgroup="avg",
-                                     showlegend=not shown["avg"], hoverinfo="skip"))
-            shown["avg"] = True
-            avg_ox.append(first_t); avg_oy.append(avg_entry); avg_oh_.append(f"avg open ₹{avg_entry:.2f}")
-            if cl:
-                avg_cx.append(cl["t"]); avg_cy.append(cl["price"]); avg_ch_.append(f"avg close ₹{cl['price']:.2f}")
+                line=dict(color=ecol, width=1.5, dash="dot"), opacity=(0.85 if closed else 0.45),
+                hoverinfo="skip", showlegend=False))
+        fig.add_trace(go.Scatter(                        # entry/add markers (hollow circle, leg colour)
+            x=[en["t"] for en in ents], y=[en["price"] for en in ents], mode="markers",
+            marker=dict(symbol="circle-open", color=ecol,
+                        size=[12 if en["action"] == "ENTRY" else 9 for en in ents],
+                        line=dict(width=2, color=ecol)),
+            text=[f"{side} {en['action']} {en['t'][11:16]}<br>Rs {en['price']:.2f}" for en in ents],
+            hoverinfo="text", showlegend=False))
+        if closed:                                       # exit marker (filled green/red)
+            fig.add_trace(go.Scatter(x=[end_t], y=[end_px], mode="markers",
+                marker=dict(symbol="circle", color=pcol, size=12, line=dict(width=1.5, color=C["bg"])),
+                text=[f"CLOSE {side} {end_t[11:16]}<br>Rs {end_px:.2f}<br><b>net Rs {pnl:,.0f}</b>"],
+                hoverinfo="text", showlegend=False))
+        ann.append(dict(x=end_t, y=end_px, text=f"{side} {pnl:+,.0f}" + ("" if closed else " open"),
+                        bgcolor=("rgba(34,197,94,0.92)" if pnl >= 0 else "rgba(239,68,68,0.92)"),
+                        bordercolor=pcol, font=dict(size=9, color="#071018"),
+                        showarrow=False, yshift=(15 if pnl >= 0 else -15), borderpad=2, opacity=0.95))
+        if show_avg:                                     # netting averaged position
+            fig.add_trace(go.Scatter(
+                x=[first_t, end_t], y=[avg_entry, end_px], mode="lines+markers",
+                line=dict(color=C["yellow"], width=1.5, dash="dot"), opacity=0.8,
+                marker=dict(symbol="diamond", size=9, color=[C["blue"], C["orange"]],
+                            line=dict(width=1, color=C["bg"])),
+                text=[f"avg open Rs {avg_entry:.2f}", f"avg close Rs {end_px:.2f}"],
+                hoverinfo="text", showlegend=False))
 
-    def _mk(x, y, hov, color, mark, name, size=12):
-        if x:
-            fig.add_trace(go.Scatter(x=x, y=y, mode="markers", name=name, text=hov, hoverinfo="text",
-                marker=dict(color=color, size=size, symbol=mark, line=dict(width=1.5, color=C["bg"]))))
-    _mk(opens_x, opens_y, opens_h, C["green"], "triangle-up", "open")
-    _mk(adds_x, adds_y, adds_h, C["green"], "circle", "OB/OS add", 8)
-    _mk(closes_x, closes_y, closes_h, C["red"], "triangle-down", "close")
-    if show_avg:
-        _mk(avg_ox, avg_oy, avg_oh_, C["blue"], "diamond", "avg open", 11)
-        _mk(avg_cx, avg_cy, avg_ch_, C["orange"], "diamond", "avg close", 11)
-
-    tag = "live position" if active else ("last trade (flat)" if side else "index — flat")
-    title = f"{symbol} — {leg or 'index'}   ·   {tag}"
-    fig.update_layout(height=430, margin=dict(l=48, r=16, t=30, b=26),
+    tag = "live" if active else "today"
+    fig.update_layout(height=460, margin=dict(l=54, r=18, t=30, b=28),
                       paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                      font=dict(color=C["dim"], size=10), hovermode="closest",
-                      title=dict(text=title, font=dict(size=12, color=C["dim"]), x=0.01, y=0.98),
-                      xaxis_rangeslider_visible=False,
-                      legend=dict(orientation="h", yanchor="bottom", y=1.015, xanchor="right", x=1,
-                                  font=dict(size=9, color=C["dim"]), bgcolor="rgba(0,0,0,0)"))
-    fig.update_xaxes(showgrid=False, tickfont=dict(size=8, color=C["muted"]), nticks=14)
+                      font=dict(color=C["dim"], size=10), hovermode="closest", showlegend=False,
+                      title=dict(text=f"{symbol} - {leg or 'index'} {side}  -  today - 5-min - {tag}",
+                                 font=dict(size=12, color=C["dim"]), x=0.01, y=0.98),
+                      xaxis_rangeslider_visible=False, annotations=ann)
+    fig.update_xaxes(showgrid=False, type="date", tickformat="%H:%M",
+                     tickfont=dict(size=8, color=C["muted"]), nticks=16)
     fig.update_yaxes(showgrid=True, gridcolor=C["grid"], tickfont=dict(size=9, color=C["muted"]),
-                     title=dict(text=("premium ₹" if side else "price ₹"), font=dict(size=9, color=C["muted"])))
+                     title=dict(text="premium Rs", font=dict(size=9, color=C["muted"])))
     return dcc.Graph(figure=fig, config={"displayModeBar": False}, style={"width": "100%"})
 
 
