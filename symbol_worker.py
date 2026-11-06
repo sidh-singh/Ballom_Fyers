@@ -41,7 +41,7 @@ from indicator import Indicator
 from strategy import Strategy, Signal
 from fyers_api import FyersAPI
 import scanner
-from state_writer import log_strategy_event, write_signal_state, write_ohlc_state
+from state_writer import log_strategy_event, write_signal_state, write_ohlc_state, backfill_ohlc_state
 
 logger = logging.getLogger("worker")
 
@@ -86,6 +86,7 @@ class SymbolWorker(threading.Thread):
     def run(self) -> None:
         logger.info("[%s] worker started (%s)", self.symbol, self.asset_type)
         self._recover_active()
+        self._backfill_ohlc()        # seed the last week of past-day price charts (once, best-effort)
         while not self.ctx.stop_event.is_set():
             _loop_start = monotonic()
             try:
@@ -171,6 +172,44 @@ class SymbolWorker(threading.Thread):
             logger.debug("[%s] ohlc_state write failed: %s", self.symbol, e)
 
     # ── OHLC persistence for the dashboard price chart ──────────────────────
+    def _backfill_ohlc(self) -> None:
+        """Seed PAST-day OHLC snapshots (last week) for this symbol from the underlying's history, so
+        the dashboard date picker shows past-day price charts right after an upgrade — not only for
+        days the engine has since run. One API call; best-effort; never overwrites a live-written day."""
+        try:
+            self._resolve_underlying()
+            df = self.ctx.api.fetch_historical_data(
+                self._active_underlying, "5", 1500,   # M5 index candles, ~enough for the retention week
+                market_type=self.asset_type, holidays=self.ctx.holidays,
+                special_sessions=self.ctx.special_sessions)
+            if df is None or len(df) == 0:
+                return
+            ts = df["Timestamp"]
+            try:                           # Fyers candles are naive-UTC; align to IST (same as _persist_ohlc)
+                ts = ts.dt.tz_localize("UTC") if ts.dt.tz is None else ts
+                ts = ts.dt.tz_convert("Asia/Kolkata").dt.tz_localize(None)
+            except Exception:
+                pass
+            tstr = [str(x)[:19] for x in ts.tolist()]
+            o = [round(float(v), 2) for v in df["Open"].tolist()]
+            h = [round(float(v), 2) for v in df["High"].tolist()]
+            l = [round(float(v), 2) for v in df["Low"].tolist()]
+            c = [round(float(v), 2) for v in df["Close"].tolist()]
+            today = now_ist().strftime("%Y-%m-%d")
+            rows_by_date: dict = {}
+            for i, s in enumerate(tstr):
+                d = s[:10]
+                if d >= today:             # today is written live by _persist_ohlc
+                    continue
+                b = rows_by_date.setdefault(d, {"t": [], "o": [], "h": [], "l": [], "c": []})
+                b["t"].append(tstr[i]); b["o"].append(o[i]); b["h"].append(h[i])
+                b["l"].append(l[i]); b["c"].append(c[i])
+            if rows_by_date:
+                backfill_ohlc_state(self.symbol, self._active_underlying, "M5", rows_by_date)
+                logger.info("[%s] backfilled OHLC history for %d past day(s)", self.symbol, len(rows_by_date))
+        except Exception as e:
+            logger.debug("[%s] ohlc backfill failed: %s", self.symbol, e)
+
     def _persist_ohlc(self, index_df) -> None:
         """Persist the UNDERLYING INDEX's today M5 candles (IST-aligned) for the dashboard. The chart
         overlays ALL of today's trades for this symbol (every leg) on it — so the live position AND
