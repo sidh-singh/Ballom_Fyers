@@ -153,9 +153,11 @@ MCX_COM_URL = "https://public.fyers.in/sym_details/MCX_COM.csv"
 # Signals are index-driven (O2), so the scan no longer needs per-option candle
 # history — it selects on liquidity + moneyness only (far fewer API calls).
 SCAN_STRIKE_COUNT = 20
-SCAN_MIN_DTE      = 7      # expiry window: not too close to expiry — want ≥ ~1 week …
-SCAN_MAX_DTE      = 31     # … and ≤ ~1 month. Index weeklies land here; gold/silver (monthly)
-                          # fall back to their nearest contract via the DTE-floor fallback.
+SCAN_MIN_DTE      = 7      # (legacy DTE window — superseded by month-end selection below)
+SCAN_MAX_DTE      = 31     # (legacy DTE window — superseded by month-end selection below)
+SCAN_ROLL_DTE     = 14     # month-end roll threshold: pick the nearest MONTH-END (monthly) expiry
+                           # that is ≥ this many days out; if the current month-end is closer than
+                           # this (< 2 weeks) roll to next month's month-end. See scan_best_pair.
 SCAN_MIN_OI       = 10000  # skip illiquid strikes (unless they have volume)
 SCAN_MAX_PREMIUM_PER_LOT = 30000   # ₹ — skip strikes whose premium × lot_size EXCEEDS this
                                    # (per-lot cost cap). 0 = no cap.

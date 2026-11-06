@@ -21,7 +21,7 @@ import math
 from datetime import datetime
 
 from constants import (
-    SCAN_STRIKE_COUNT, SCAN_MIN_DTE, SCAN_MAX_DTE, SCAN_MIN_OI,
+    SCAN_STRIKE_COUNT, SCAN_MIN_DTE, SCAN_MAX_DTE, SCAN_ROLL_DTE, SCAN_MIN_OI,
     SCAN_MAX_PREMIUM_PER_LOT, SCAN_MIN_PREMIUM_PER_LOT, SCAN_ROUND_STRIKE_STEP,
 )
 
@@ -130,11 +130,15 @@ def scan_best_pair(symbol_cfg: dict, api, meter=None, lot_df=None) -> dict | Non
                 continue
         expiries.sort(key=lambda x: x[0])
         now = datetime.now()
-        # Expiry preference: in-window [MIN,MAX] DTE first; else the nearest that is still ≥ MIN
-        # (avoid a too-close expiry — commodities' monthly lands here); else nearest available.
-        carry = [(d, ep) for d, ep in expiries if SCAN_MIN_DTE <= (d - now).days <= SCAN_MAX_DTE]
-        not_too_close = [(d, ep) for d, ep in expiries if (d - now).days >= SCAN_MIN_DTE]
-        pick = (carry or not_too_close or expiries)[:1]
+        # MONTH-END expiry: the last expiry of each calendar month (NSE monthly = last weekly of the
+        # month). Pick the closest month-end that is ≥ SCAN_ROLL_DTE (2 weeks) away; if the nearest
+        # month-end is inside 2 weeks, roll to next month's — carry-friendly, data-rich pairs.
+        monthly = {}
+        for d, ep in expiries:          # ascending → last write per (year, month) = that month's end
+            monthly[(d.year, d.month)] = (d, ep)
+        monthlies = sorted(monthly.values(), key=lambda x: x[0])
+        _future = [(d, ep) for d, ep in monthlies if (d - now).days >= SCAN_ROLL_DTE]
+        pick = (_future or monthlies or expiries)[:1]
         if not pick:
             logger.info("scan(%s): no expiries", symbol_cfg.get("symbol"))
             return None
