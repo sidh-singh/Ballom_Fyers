@@ -6,8 +6,9 @@ Improved over the old dev_scanner scorer:
     check (the old scanner fired a 500-candle history call for ~10 candidates ×
     every expiry — the biggest DATA-budget hog). Selection is now purely on
     liquidity + moneyness → far fewer API calls, faster, carry-suited.
-  • Expiry preference tuned for carry: nearest expiry with DTE in
-    [SCAN_MIN_DTE, SCAN_MAX_DTE] (monthly-ish), else nearest available.
+  • Expiry = the MONTH-END (monthly) expiry — the last expiry of each calendar
+    month — choosing the closest that is ≥ SCAN_ROLL_DTE (2 weeks) out, and rolling
+    to next month's month-end if the current one is nearer than that.
   • Returns the best CE + best PE for a fresh basket.
 
 Every API call goes through FyersAPI.safe_api_call → api_meter (throttled).
