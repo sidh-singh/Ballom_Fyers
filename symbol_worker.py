@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from datetime import time as dt_time
 from time import monotonic
 
 from constants import (
@@ -572,11 +573,28 @@ class SymbolWorker(threading.Thread):
 
     # ── misc ────────────────────────────────────────────────────────────────
     def _in_window(self) -> bool:
+        now_t = now_ist().time()
+        # Special session (Diwali Muhurat / weekend Union-Budget): a day the market is OPEN at
+        # non-standard hours. Trade ONLY in that session's own window, and ONLY for the asset the
+        # session applies to — other assets stay flat that day (e.g. MCX on an NSE-only muhurat).
+        specials = [s for s in (getattr(self.ctx, "special_sessions", None) or [])
+                    if s.get("date") == now_ist().date().isoformat()]
+        if specials:
+            for s in specials:
+                if s.get("asset_type", "INDEX") != self.asset_type:
+                    continue
+                try:
+                    o = dt_time(*map(int, s["open"].split(":")))
+                    c = dt_time(*map(int, s["close"].split(":")))
+                except (KeyError, ValueError, TypeError):
+                    return False
+                return o <= now_t <= c
+            return False  # special-session day, but none for this asset → don't trade it today
         if self.asset_type == "COMMODITY" and self._session:
             o, c = self._session
-            return o <= now_ist().time() <= c
+            return o <= now_t <= c
         hrs = MARKET_HOURS.get(self.asset_type, MARKET_HOURS["INDEX"])
-        return hrs["open"] <= now_ist().time() <= hrs["close"]
+        return hrs["open"] <= now_t <= hrs["close"]
 
     @staticmethod
     def _ok(resp) -> bool:
