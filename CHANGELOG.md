@@ -1,5 +1,9 @@
 # CHANGELOG — `fyers_live` / `fyers_demo`
 
+## 2026-11-06 — OHLC price chart: index + all today's trades, IST-aligned, current-day
+
+Final per-symbol price chart. Plots the UNDERLYING INDEX's today 5-min candles (IST-aligned — Fyers epochs are UTC, fills are IST) and overlays EVERY trade for the symbol (live position + all closed trades, across every option leg) at its exact time: ENTRY/ADD hollow circle (CE blue / PE orange), CLOSE filled circle (green profit / red loss), dotted entry->exit line, green/red Rs P/L label; the netting averaged position (yellow dotted) shows only for a multi-entry position. Premium + net Rs in the hover. symbol_worker persists the index (not the active leg) and, after a symbol's market closes, persists today's index candles once so its chart stays visible (fixes NIFTY blank in the evening while MCX still trades). Dashboard groups fills by asset.
+
 ## 2026-11-06 — OHLC chart now shows ALL of today's trades (live + closed) on the index
 
 Fix: the chart only showed the CURRENT leg's trade — closed trades on other strikes were filtered out. Now it plots the UNDERLYING INDEX's today 5-min candles and overlays EVERY trade for the symbol (every option leg) at its exact time — the live position AND all closed trades — each as entry (hollow, CE blue / PE orange) -> exit (filled, green profit / red loss) with a dotted line and a green/red P/L label; premium + net Rs are in the hover. Markers sit on the index at the trade time (one common axis all day, since each leg is a different instrument). symbol_worker._persist_ohlc now persists the index (not the active leg); the dashboard groups fills by asset, not by current leg; a closed-market symbol with no candles still lists today's trades on a premium axis. _Why: owner could only see the open position, not the already-closed GOLD/SILVER trades._
