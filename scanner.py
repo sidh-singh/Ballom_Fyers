@@ -22,7 +22,8 @@ import math
 from datetime import datetime
 
 from constants import (
-    SCAN_STRIKE_COUNT, SCAN_MIN_DTE, SCAN_MAX_DTE, SCAN_ROLL_DTE, SCAN_MIN_OI, SCAN_MAX_PREMIUM_PER_LOT,
+    SCAN_STRIKE_COUNT, SCAN_MIN_DTE, SCAN_MAX_DTE, SCAN_ROLL_DTE, SCAN_MIN_OI,
+    SCAN_MAX_PREMIUM_PER_LOT, SCAN_MIN_PREMIUM_PER_LOT, SCAN_ROUND_STRIKE_STEP,
 )
 
 logger = logging.getLogger("scanner")
@@ -61,7 +62,17 @@ def _spread_eff(bid: float, ask: float) -> float:
     return max(0.0, 1 - (ask - bid) / mid) if mid > 0 else 0.0
 
 
-def _score(o: dict, spot: float, otype: str, lot_size, max_per_lot: float):
+def _roundness(strike: float, step: float) -> float:
+    """1.0 at a round multiple of `step`, decaying to 0 at the half-step. Rewards the liquid,
+    long-history strikes (e.g. NIFTY 24000/25000/26000 for step=1000). No step → neutral 0.5."""
+    if not step or step <= 0:
+        return 0.5
+    d = abs(strike - round(strike / step) * step)   # distance to the nearest round multiple
+    return max(0.0, 1.0 - d / (step / 2.0))
+
+
+def _score(o: dict, spot: float, otype: str, lot_size, max_per_lot: float,
+           min_per_lot: float, round_step: float):
     ltp = float(o.get("ltp", 0) or 0)
     oi = float(o.get("oi", 0) or 0)
     vol = float(o.get("volume", 0) or 0)
@@ -72,13 +83,19 @@ def _score(o: dict, spot: float, otype: str, lot_size, max_per_lot: float):
         return None
     if oi < SCAN_MIN_OI and vol <= 0:          # illiquid
         return None
-    if max_per_lot and lot_size and ltp * lot_size > max_per_lot:   # per-lot premium cap
-        return None
-    score = (_moneyness(strike, spot, otype) * 0.35
-             + _spread_eff(bid, ask) * 0.25
-             + min(oi / 1_000_000, 1.0) * 0.20
-             + min(math.log1p(vol) / 14.0, 1.0) * 0.10
-             + (1.0 if ltp < spot * 0.05 else 0.5) * 0.10)
+    # Per-lot premium BAND: skip strikes that cost more than the cap or less than the floor,
+    # so we land near-ATM options with real value / history (not cheap far-OTM). Needs lot_size.
+    if lot_size:
+        per_lot = ltp * lot_size
+        if max_per_lot and per_lot > max_per_lot:
+            return None
+        if min_per_lot and per_lot < min_per_lot:
+            return None
+    score = (_moneyness(strike, spot, otype) * 0.30     # closeness to ATM (slight-OTM preferred)
+             + _roundness(strike, round_step) * 0.20    # prefer round (liquid, long-history) strikes
+             + _spread_eff(bid, ask) * 0.20             # tight spread
+             + min(oi / 1_000_000, 1.0) * 0.20          # open interest
+             + min(math.log1p(vol) / 14.0, 1.0) * 0.10) # volume
     return score, strike, ltp
 
 
@@ -88,6 +105,8 @@ def scan_best_pair(symbol_cfg: dict, api, meter=None, lot_df=None) -> dict | Non
     exceeds the per-lot cap are skipped (needs lot_df)."""
     underlying = symbol_cfg.get("_resolved_underlying", symbol_cfg["underlying"])
     max_per_lot = symbol_cfg.get("max_premium_per_lot", SCAN_MAX_PREMIUM_PER_LOT)
+    min_per_lot = symbol_cfg.get("min_premium_per_lot", SCAN_MIN_PREMIUM_PER_LOT)
+    round_step = symbol_cfg.get("round_strike_step", SCAN_ROUND_STRIKE_STEP)
     model = api.model
     try:
         q = api.safe_api_call(model.quotes, data={"symbols": underlying})
@@ -139,7 +158,8 @@ def scan_best_pair(symbol_cfg: dict, api, meter=None, lot_df=None) -> dict | Non
             for o in chain:
                 if o.get("option_type") != otype:
                     continue
-                s = _score(o, spot, otype, _lot(o.get("symbol", ""), lot_df), max_per_lot)
+                s = _score(o, spot, otype, _lot(o.get("symbol", ""), lot_df),
+                           max_per_lot, min_per_lot, round_step)
                 if s:
                     ranked.append((s[0], o, s[1], s[2]))
             if not ranked:
