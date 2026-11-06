@@ -21,10 +21,12 @@ from typing import Any
 
 from constants import (
     STATE_DIR, APP_STATUS_FILE, STRATEGY_LOG_DIR, now_ist,
-    SIGNAL_STATE_FILE, ACCOUNT_STATE_FILE,
+    SIGNAL_STATE_FILE, ACCOUNT_STATE_FILE, OHLC_STATE_FILE,
 )
 
 _signal_lock = threading.Lock()   # serialise per-symbol signal_state read-merge-write
+_ohlc_lock = threading.Lock()     # serialise per-symbol ohlc_state read-merge-write
+_OHLC_MAX_BARS = 96               # ~1 session of M5 candles kept for the price chart
 
 _MAX_LOG_ENTRIES = 500
 _MAX_LOG_DAYS = 14
@@ -80,6 +82,27 @@ def write_account_state(payload: dict) -> None:
     payload = dict(payload)
     payload["timestamp"] = _ts()
     _write_json_atomic(ACCOUNT_STATE_FILE, payload)
+
+
+def write_ohlc_state(symbol: str, leg: str, side: str, tf: str,
+                     t: list, o: list, h: list, l: list, c: list, active: bool) -> None:
+    """Upsert one symbol's recent OHLC candles for the dashboard price chart.
+
+    `leg` is the instrument the candles belong to (the active CE/PE option while a
+    position is open, else the underlying index). Arrays are column-wise; the dashboard
+    plots go.Candlestick(x=t, open=o, high=h, low=l, close=c) and overlays the fills
+    from profit_history.json. Pandas stays in the worker — this takes plain lists."""
+    n = _OHLC_MAX_BARS
+    with _ohlc_lock:
+        data = _read_json(OHLC_STATE_FILE)
+        if not isinstance(data, dict):
+            data = {}
+        data[symbol] = {
+            "leg": leg, "side": side, "tf": tf, "active": bool(active),
+            "t": list(t)[-n:], "o": list(o)[-n:], "h": list(h)[-n:],
+            "l": list(l)[-n:], "c": list(c)[-n:], "timestamp": _ts(),
+        }
+        _write_json_atomic(OHLC_STATE_FILE, data)
 
 
 # ── strategy log (date-partitioned) ─────────────────────────────────────────
