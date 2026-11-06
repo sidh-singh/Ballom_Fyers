@@ -18,11 +18,12 @@ import logging
 import threading
 from dataclasses import dataclass, field
 from datetime import date
-from time import sleep
+from time import sleep, monotonic
 
 import constants
 from constants import (
-    SYMBOLS_JSON, SUPERVISOR_TICK, DAILY_MAINTENANCE_AT, MARKET_HOURS, now_ist, today_ist,
+    SYMBOLS_JSON, SUPERVISOR_TICK, DAILY_MAINTENANCE_AT, MARKET_HOURS,
+    MARKET_STATUS_STALE_S, now_ist, today_ist,
 )
 from fyers_auth import FyersAuth
 from fyers_api import FyersAPI
@@ -54,11 +55,13 @@ class EngineContext:
     brake_event: threading.Event
     pairs_lock: threading.Lock
     holidays: set = field(default_factory=set)
-    special_sessions: list = field(default_factory=list)
+    special_sessions: list = field(default_factory=list)   # auto-detected live (see _refresh_special_sessions)
     option_df: object = None
     commodity_df: object = None
     prime_renewal: str = ""
     _last_money: dict = field(default_factory=dict)   # last balance/positions snapshot (reused when markets closed)
+    market_status: dict = field(default_factory=dict)  # live {asset_type: is_open} from the broker
+    market_status_ts: float = 0.0                      # monotonic() of the last good market_status poll
 
     def is_trading_day(self, d: date) -> bool:
         """Weekend + NSE-holiday aware (special sessions override)."""
@@ -68,6 +71,17 @@ class EngineContext:
         if d.weekday() >= 5:
             return False
         return ds not in self.holidays
+
+    def is_segment_open(self, asset_type: str) -> bool | None:
+        """Broker-authoritative live open/close for this asset's segment, or None when there is no
+        FRESH reading (poll failed / too old / segment missing) — in which case the caller falls
+        back to the static schedule. Refreshed every tick by the supervisor. This is the signal
+        that lets the engine trade Diwali Muhurat / Budget / any unusual day with no hardcoded dates."""
+        if not self.market_status:
+            return None
+        if monotonic() - self.market_status_ts > MARKET_STATUS_STALE_S:
+            return None
+        return self.market_status.get(asset_type)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -156,18 +170,57 @@ def supervise_workers(workers: dict, config: dict, ctx: EngineContext) -> None:
 
 
 def _markets_open(ctx: EngineContext, config: dict) -> bool:
-    """True if any enabled symbol's market window is open right now (coarse static hours:
-    INDEX 09:15–15:30, COMMODITY 09:00–23:30). Used to skip read-API polling off-hours."""
+    """True if any enabled symbol's market is open right now. Prefers the broker's LIVE status
+    (so a Muhurat / Budget / any unusual session counts too); falls back to the static schedule
+    (INDEX 09:15–15:30, COMMODITY 09:00–23:30) when no fresh live reading exists. Used to skip
+    read-API polling off-hours."""
+    enabled = [e for e in config.get("symbols", []) if e.get("enabled")]
+    # live broker status first
+    for entry in enabled:
+        if ctx.is_segment_open(entry.get("asset_type", "INDEX")) is True:
+            return True
+    # fallback: static schedule
     if not ctx.is_trading_day(now_ist().date()):
         return False
     t = now_ist().time()
-    for entry in config.get("symbols", []):
-        if not entry.get("enabled"):
-            continue
+    for entry in enabled:
         hrs = MARKET_HOURS.get(entry.get("asset_type", "INDEX"), MARKET_HOURS["INDEX"])
         if hrs["open"] <= t <= hrs["close"]:
             return True
     return False
+
+
+def _refresh_market_status(ctx: EngineContext) -> None:
+    """Poll the broker's live market_status and cache it on the context (only overwrite on a good
+    read, so a transient failure keeps the last value until it goes stale — see is_segment_open)."""
+    try:
+        ms = ctx.api.get_market_status()
+    except Exception as e:
+        logger.debug("market_status poll failed: %s", e)
+        return
+    if ms:
+        ctx.market_status = ms
+        ctx.market_status_ts = monotonic()
+
+
+def _refresh_special_sessions(ctx: EngineContext) -> None:
+    """Auto-detect an unusual OPEN day (Diwali Muhurat / Union Budget / anything NSE keeps open) and
+    inject TODAY as a special session so the data fetch + is_trading_day include it. Driven entirely
+    by the live broker status — no hardcoded dates/times. On a normal scheduled day, or when nothing
+    is open, special_sessions is cleared. The actual trade gate still uses the live status directly
+    (symbol_worker._should_trade_now); this only widens the data window to cover today."""
+    today = now_ist().date()
+    ds = today.isoformat()
+    any_open = any(bool(v) for v in (ctx.market_status or {}).values())
+    scheduled = (today.weekday() < 5 and ds not in ctx.holidays)
+    if any_open and not scheduled:
+        ctx.special_sessions = [{
+            "date": ds,
+            "name": "Auto-detected special session (live market status)",
+            "open": "00:00", "close": "23:59",   # wide → data fetch covers all of today
+        }]
+    else:
+        ctx.special_sessions = []
 
 
 def _write_account(ctx: EngineContext, markets_open: bool = True) -> None:
@@ -264,6 +317,10 @@ def main() -> None:
         logger.exception("Initial daily_maintenance failed: %s", e)
     _resolve_plan(ctx, config)
 
+    # prime the live market status so workers have it from their first tick
+    _refresh_market_status(ctx)
+    _refresh_special_sessions(ctx)
+
     workers: dict[str, SymbolWorker] = {}
     supervise_workers(workers, config, ctx)
     write_app_status("started", f"{len(workers)} worker(s) spawned")
@@ -299,6 +356,11 @@ def main() -> None:
             # auth health (pt 2)
             if not _ensure_auth(auth):
                 write_app_status("auth_failed", "Auth health check failing")
+
+            # live broker market status → auto-detects Muhurat / Budget / any unusual open day
+            # (no hardcoded dates); drives the worker trade gate + widens today's data window.
+            _refresh_market_status(ctx)
+            _refresh_special_sessions(ctx)
 
             # re-read config only when symbols.json changed on disk (lighter loop)
             try:

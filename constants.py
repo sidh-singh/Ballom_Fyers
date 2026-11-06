@@ -129,7 +129,14 @@ ENDPOINT_CATEGORY = {
     # USERINFO
     "get_profile": "USERINFO", "funds": "USERINFO", "holdings": "USERINFO",
     "positions": "USERINFO", "orderbook": "USERINFO", "tradebook": "USERINFO",
+    "market_status": "USERINFO",   # live exchange open/close poll (cheap, ~1×/supervisor tick)
 }
+
+# Live market-status cache freshness. The supervisor polls Fyers market_status each tick and
+# caches it on the context; a worker only trusts that reading if it's newer than this many
+# seconds, else it falls back to the static schedule. Keeps a dead/stale poll from freezing
+# trading (and a stale "open" from trading into a close). ~6× the supervisor tick.
+MARKET_STATUS_STALE_S = 180
 DEFAULT_CATEGORY = "DATA"   # unknown method → treat as DATA (most-restrictive)
 
 
