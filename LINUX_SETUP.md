@@ -11,8 +11,8 @@ terminal (the black screen) on your server and type, you can do this.
 ## 1. What you need
 
 - A **Debian 12 or 13** server you can log into over **SSH** (you bought this already).
-- The login command your host gave you, e.g. `ssh root@203.0.113.9` or `ssh youruser@yourserver`.
-  Run that on your own laptop first — you should land at a prompt like `user@server:~$`.
+- Your server login: **`ssh root@80.150.138.80`** (user `root`, IP `80.150.138.80`, SSH port `22` — the default).
+  Run that on your own laptop first — you should land at a prompt like `root@...:~#`.
 
 That `~$` prompt is where every command below is typed.
 
@@ -96,19 +96,19 @@ sudo systemctl start   ballom-fyers_live-dash   # dashboard only
 
 ## 5. View the dashboard (from your own laptop)
 
-The dashboard runs on the server at `http://127.0.0.1:8050`. `127.0.0.1` means "this machine
+The dashboard runs on the server at `http://127.0.0.1:8051`. `127.0.0.1` means "this machine
 only" — for safety it is **not** open to the internet. To see it from your laptop, make an **SSH
 tunnel**: run this **on your laptop** (not the server), using your normal login:
 
 ```bash
-ssh -L 8050:127.0.0.1:8050 youruser@yourserver
+ssh -L 8051:127.0.0.1:8051 root@80.150.138.80
 ```
 
 Leave that window open, then first start the dashboard service **on the server**:
 ```bash
 sudo systemctl start ballom-fyers_live-dash
 ```
-Now open **`http://127.0.0.1:8050`** in your laptop's browser. The tunnel forwards it securely.
+Now open **`http://127.0.0.1:8051`** in your laptop's browser. The tunnel forwards it securely.
 
 ---
 
@@ -139,15 +139,17 @@ overwrite your edits** — your settings are safe forever. (Updated defaults, if
 This is built to be safe. Each bot is an **instance** with its own data folder, its own Python
 env, its own dashboard port, and its own service name — so they **never interfere**.
 
-**Example — also run the demo alongside live:**
+**Every branch is preset to its own dashboard port (8050–8055), so they never clash** — you
+don't set anything. `./start.sh` prints the exact port for the branch you're on. The order is
+demo→live per family: fyers 8050/8051, netting 8052/8053, hedging 8054/8055.
+
+**Example — run the demo alongside this one:**
 ```bash
 git clone -b linux_fyers_demo https://github.com/sidh-singh/Ballom_Fyers.git ~/ballom-demo
-cd ~/ballom-demo
-PORT=8051 bash setup.sh                 # give the demo a different dashboard port
-sudo systemctl start ballom-fyers_demo       # its own service, separate from live
+cd ~/ballom-demo && bash setup.sh            # auto-uses its own port + data dir + service
+./start.sh                                   # no PORT= needed
 ```
-Now `fyers_live` uses `~/ballom-trading/fyers_live/` on port 8050, and `fyers_demo` uses
-`~/ballom-trading/fyers_demo/` on port 8051 — zero overlap.
+Each instance gets its own `~/ballom-trading/<instance>/` folder and `ballom-<instance>` service, so nothing overlaps.
 
 **Future brokers in this same repo:** the instance name drives everything. A new broker just runs
 with its own `INSTANCE` (and, if its entry file differs, `ENGINE`):
@@ -162,7 +164,7 @@ The knobs you can set before any command (all optional — sensible defaults oth
 | Variable | Default | Meaning |
 |---|---|---|
 | `INSTANCE` | the branch name (minus `linux_`) | the bot's unique name — drives data dir + service |
-| `PORT` | `8050` | dashboard port (use a different one per instance) |
+| `PORT` | preset per branch (8050–8055) | dashboard port; override to change it |
 | `BALLOM_DIR` | `~/ballom-trading/<INSTANCE>` | where data/token/cache live |
 | `ENGINE` | `application.py` | the engine entry file (future brokers may differ) |
 | `PYTHON` | auto | force a specific Python 3.11 path |
@@ -198,8 +200,8 @@ Notes:
 ## 10. Security (it's a money bot)
 
 - Use a **dedicated non-root user** if you can; `chmod 600` the token file.
-- The dashboard stays on `127.0.0.1` — reach it **only** through the SSH tunnel. Never open port
-  8050 to the internet.
+- The dashboard stays on `127.0.0.1` — reach it **only** through the SSH tunnel. Never open the
+  dashboard port (8050–8055) to the internet.
 - Keep the server patched: `sudo apt update && sudo apt upgrade -y` occasionally.
 - The TOTP secret / PIN live in `fyers_auth.py`, so keep the repo folder private.
 
