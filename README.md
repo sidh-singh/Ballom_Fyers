@@ -23,18 +23,20 @@ and a background service. When it finishes it prints the start/stop commands.
 
 ### Start / stop / watch
 
+Easiest — **one command starts both** the engine and the dashboard (in the background):
+
 ```bash
-sudo systemctl start   ballom-fyers_demo        # start the trading engine
-sudo systemctl stop    ballom-fyers_demo        # stop it
-journalctl -u ballom-fyers_demo -f              # watch live logs (Ctrl-C to quit)
-sudo systemctl start   ballom-fyers_demo-dash   # start the dashboard (port 8050)
+./start.sh                                      # start BOTH engine + dashboard
+./stop.sh                                       # stop both
+journalctl -u ballom-fyers_demo -f              # watch the engine live (Ctrl-C to quit)
 ```
 
 > **`*_live` instances place real orders** once funded; **`*_demo` instances simulate** (no real
-> orders). The engine is never auto-started — you start it with the command above when ready.
+> orders). On a `*_live` instance `./start.sh` asks you to type `yes` first (skip with `./start.sh -y`).
 
-Prefer the foreground (Ctrl-C to stop)? `./start_app.sh` (engine) and `./start_dashboard.sh`
-(dashboard).
+Want to control them separately? `sudo systemctl start/stop ballom-fyers_demo` (engine) and
+`…-dash` (dashboard). Or run one in the foreground to watch it live: `./start_app.sh` /
+`./start_dashboard.sh`.
 
 ### Viewing the dashboard
 It binds to `127.0.0.1` only (not the internet). From your laptop, open an SSH tunnel then browse
@@ -51,7 +53,8 @@ See [`LINUX_SETUP.md` §7](LINUX_SETUP.md). Example: `PORT=8051 bash setup.sh` f
 | File | Purpose |
 |---|---|
 | `setup.sh` | one-command installer (run this first) |
-| `start_app.sh` / `start_dashboard.sh` | run engine / dashboard in the foreground |
+| **`start.sh` / `stop.sh`** | start / stop BOTH engine + dashboard together (everyday commands) |
+| `start_app.sh` / `start_dashboard.sh` | (advanced) run engine / dashboard in the foreground |
 | `install-service.sh` | (re)install the background systemd services |
 | `scripts/common.sh` | shared config — namespaces every bot by instance |
 | `LINUX_SETUP.md` | full beginner guide |
