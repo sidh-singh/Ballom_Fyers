@@ -57,28 +57,30 @@ because the Fyers library doesn't work on Debian 13's built-in Python 3.13.
 
 ## 4. Start, stop, and watch the bot
 
-The installer set the bot up as a **service** — a program Linux keeps running for you in the
-background (it restarts itself if it crashes and comes back after a reboot).
+The bot runs as **services** — programs Linux keeps running in the background (they restart if they
+crash and come back after a reboot). The engine and the dashboard are **two separate services**.
 
-**Start the trading engine:**
+**The easy way — one command starts BOTH:**
 ```bash
-sudo systemctl start ballom-fyers_live
+./start.sh        # starts the engine AND the dashboard (in the background)
+./stop.sh         # stops both
 ```
-**Stop it:**
-```bash
-sudo systemctl stop ballom-fyers_live
-```
-**Is it running?**
-```bash
-sudo systemctl status ballom-fyers_live
-```
-(Green `active (running)` = good. Press `q` to exit that screen.)
+`./start.sh` does **not** block your terminal, and both keep running after you log out. On a `_live`
+instance it asks you to type `yes` first (skip with `./start.sh -y`).
 
-**Watch what it's doing, live:**
+**Watch what the engine is doing, live:**
 ```bash
 journalctl -u ballom-fyers_live -f
 ```
 (`-f` = "follow". Press **Ctrl-C** to stop watching — this does **not** stop the bot.)
+
+**Control each service separately** (only if you ever need to):
+```bash
+sudo systemctl start   ballom-fyers_live        # engine only
+sudo systemctl stop    ballom-fyers_live
+sudo systemctl status  ballom-fyers_live        # running? (green = good; press q to exit)
+sudo systemctl start   ballom-fyers_live-dash   # dashboard only
+```
 
 ### LIVE vs DEMO — important
 - Instances ending in **`_live`** place **REAL orders** with real money once started and funded.

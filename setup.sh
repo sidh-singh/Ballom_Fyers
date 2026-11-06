@@ -86,16 +86,19 @@ cat <<EOF
      data + token + logs : $BALLOM_DIR
      dashboard web page   : http://127.0.0.1:$PORT   (after you start it)
 
-  START / STOP THE ENGINE (runs in the background, restarts itself):
-     $SUDO systemctl start   ballom-$INSTANCE        # start trading engine
-     $SUDO systemctl stop    ballom-$INSTANCE        # stop it
-     $SUDO systemctl status  ballom-$INSTANCE        # is it running?
-     journalctl -u ballom-$INSTANCE -f               # watch live logs (Ctrl-C quits)
+  EASIEST — start / stop BOTH the engine AND the dashboard together:
+     ./start.sh         # start both (background) — does NOT block your terminal
+     ./stop.sh          # stop both
 
-  START THE DASHBOARD (background):
-     $SUDO systemctl start   ballom-$INSTANCE-dash   # then view http://127.0.0.1:$PORT
+  WATCH / CHECK:
+     journalctl -u ballom-$INSTANCE -f               # watch engine logs (Ctrl-C quits)
+     $SUDO systemctl status ballom-$INSTANCE         # is the engine running?
 
-  PREFER THE FOREGROUND instead of a service? (Ctrl-C stops it)
+  Control each one separately if you want:
+     $SUDO systemctl start/stop ballom-$INSTANCE          # engine only
+     $SUDO systemctl start/stop ballom-$INSTANCE-dash     # dashboard only
+
+  Or run in the FOREGROUND to watch it live (Ctrl-C stops it):
      ./start_app.sh          # engine
      ./start_dashboard.sh    # dashboard (in a second terminal)
 
