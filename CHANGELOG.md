@@ -1,5 +1,11 @@
 # CHANGELOG — `fyers_live` / `fyers_demo`
 
+## 2026-11-07 — Dashboard date picker (view the last 7 days) + 1-week data retention
+
+Added a **"View date"** dropdown (top-right): Today + the previous 6 days. Pick a past date and the whole dashboard switches to THAT day — the per-symbol OHLC price chart with that day's entry/exit markers, the day's closes / booked P&L, per-symbol P&L chart, and that day's strategy log. A banner marks the historical view; live-only panels (current RSI / SHA / slope signals, balance / equity, API usage) are shown for **Today only**, and the KPI row switches to the day's realised / gross / taxes / closes. Today stays fully live. The picker auto-rolls each day without losing the current selection (`_sync_viewdate`).
+
+**Storage + retention (1 week):** the engine now writes a per-day OHLC snapshot `state/ohlc_hist/<date>.json` (the dashboard loads the selected day's); `profit_history.json` is pruned to the last 7 days on write; strategy-log retention drops 14 → 7 (`HISTORY_RETENTION_DAYS`); a shared `_prune_dir` keeps each history folder to the window. `profit_history` already stamped every fill with a `date`, so past-day filtering was already supported. Dashboards are strategy-specific (HAM vs RSI+MACD) — both patched. All 12 branches. _Why: owner wanted to review what/how it traded on past days and keep only ~1 week of data._
+
 ## 2026-11-07 — Faster dashboard refresh: account/P&L cadence 30s → 10s
 
 The dashboard already polls every 5 s and reads JSON state, and per-symbol signals already refresh every `WORKER_IDLE_SLEEP`=8 s — but the **account block** (balance / equity / unrealized P&L / margin / open-position count / app-status) is written once per Loop-1 supervisor tick, which slept `SUPERVISOR_TICK`=30 s. So those values felt ~30 s stale. Dropped `SUPERVISOR_TICK` 30 → **10 s**, so account/P&L now refreshes ~10 s (dashboard shows it within 5–10 s). Cost: `_write_account` (funds+positions = 2 USERINFO) + `market_status` (1) per tick → ~18 USERINFO/min during market hours, far under the 200/min standard-plan cap (and off-hours `_write_account` still skips the API, reusing the last snapshot). Raise `SUPERVISOR_TICK` again if several bots share one Fyers account. All 12 branches. _Why: owner saw the dashboard values refreshing only ~every 30 s and asked to bring it to ~10 s._
