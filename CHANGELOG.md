@@ -7,6 +7,10 @@ Format: `YYYY-MM-DD` — change — _why_.
 
 ---
 
+## 2026-11-06 — Worker loop idle 15s -> 8s (faster LTP-based profit-booking)
+
+`WORKER_IDLE_SLEEP` reduced 15 -> 8 in `constants.py`. Entries are unaffected (RSI/MACD/SHA signals are computed on 5m/15m/H4 candles and only change on a new bar), so this only speeds up the **LTP-based profit-booking / force-close reaction** from ~15-25s to ~8-10s. Safe for a single bot on Prime (well under 500 DATA/min with per-bar caching); keep >=15 if several bots share one Fyers account (shared per-account rate limit). Not set to 0 — the `api_meter` would then throttle the loop anyway while spinning CPU on cached recompute, with no entry benefit and a -429 / daily-block risk. `SUPERVISOR_TICK` (30s account/maintenance poll) unchanged. All 12 branches. _Why: owner wanted less delay; this trims the only latency that matters (profit exits) without hammering the API._
+
 ## 2026-11-05 — API rate-limit detection + bottom-of-dashboard “API RATE LIMITS” panel
 
 `api_meter` now captures every Fyers **-429** — per category it exposes `rate_limited`, the live

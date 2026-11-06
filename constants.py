@@ -61,7 +61,7 @@ SYMBOLS_JSON = Path(__file__).resolve().parent / "symbols.json"
 # ═══════════════════════════════════════════════════════════════════════════════
 
 SUPERVISOR_TICK      = 30                 # seconds between Loop-1 ticks
-WORKER_IDLE_SLEEP    = 15                 # idle between worker ticks; the fetch+trade loop paces itself (lower = faster LTP-based booking)
+WORKER_IDLE_SLEEP    = 8                  # idle between worker ticks (was 15); lower = faster LTP-based profit-booking, entries are bar-based. 8 = Prime single-bot; keep >=15 if several bots share one Fyers account.
 DAILY_MAINTENANCE_AT = dt_time(0, 10)     # ~00:10 IST → re-auth + re-download CSV
 
 
