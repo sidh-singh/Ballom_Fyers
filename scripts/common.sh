@@ -40,8 +40,19 @@ INSTANCE_DIR="$TRADING_HOME/$INSTANCE"
 export BALLOM_DIR="${BALLOM_DIR:-$INSTANCE_DIR}"     # constants.py reads this env var
 VENV="${VENV:-$INSTANCE_DIR/venv}"
 
-# ---- dashboard port + entrypoints (a future broker may override ENGINE) ----
-PORT="${PORT:-8050}"
+# ---- dashboard port (preset per instance so several bots never clash; override with PORT=) ----
+case "$INSTANCE" in
+    fyers_demo)         _default_port=8050 ;;
+    fyers_live)         _default_port=8051 ;;
+    fyers_netting_demo) _default_port=8052 ;;
+    fyers_netting_live) _default_port=8053 ;;
+    fyers_hedging_demo) _default_port=8054 ;;
+    fyers_hedging_live) _default_port=8055 ;;
+    *)                  _default_port=8050 ;;
+esac
+PORT="${PORT:-$_default_port}"
+
+# ---- entrypoints (a future broker may override ENGINE) ----
 ENGINE="${ENGINE:-application.py}"
 DASHBOARD="${DASHBOARD:-dashboard.py}"
 

@@ -1,5 +1,9 @@
 # CHANGELOG — `fyers_live` / `fyers_demo`
 
+## 2026-11-06 — Preset dashboard ports per branch + real server details in docs
+
+Each `linux_` branch now has a distinct **preset dashboard PORT** (fyers_demo 8050, fyers_live 8051, netting_demo 8052, netting_live 8053, hedging_demo 8054, hedging_live 8055) via a per-instance `case` in `scripts/common.sh` — so you can run several bots at once with zero port clashes and no manual `PORT=`. Override still works. README + LINUX_SETUP.md updated: each branch's dashboard URL + SSH tunnel show its own port, section 7 reflects the presets, and the real server (`root@80.150.138.80`, SSH port 22) is filled into the login + tunnel examples. 6 `linux_` branches. _Why: owner runs multiple bots and wanted preset non-colliding ports + their server in the guide._
+
 ## 2026-11-06 — Config decoupled: symbols.json git-ignored, shipped as symbols.example.json
 
 `symbols.json` (your symbols/units config) is no longer tracked — renamed to `symbols.example.json` (the shipped template) and git-ignored. `scripts/common.sh` creates `symbols.json` from the template on first run if it's missing, so a fresh clone still works out of the box. Result: `git pull` / the start.sh auto-update can **never overwrite your edited config** — the pull-conflict risk on `symbols.json` is gone. `setup.sh` output + LINUX_SETUP.md section 6 note where your config lives. 6 `linux_` branches (each keeps its own config as its example). _Why: `symbols.json` was tracked, so editing it on the server could block updates; this is the standard example-file pattern._
