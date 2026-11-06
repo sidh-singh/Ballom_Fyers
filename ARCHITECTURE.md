@@ -202,18 +202,21 @@ Times are IST. **All datetime logic must be timezone-aware (IST)** — the old
 code used naive `datetime.now()`, which silently breaks on non-IST hosts; the
 redirect URI (`jenkin.…`) suggests a server, so this is a real risk to fix.
 
-**Special sessions — Diwali Muhurat & weekend Union-Budget.** Some NSE days are
-closed on the weekend/holiday calendar yet trade at non-standard hours.
-`FyersAPI._known_special_sessions(year)` yields `{date, name, open, close,
-asset_type}` for these: Muhurat from a hand-maintained per-year table
-(`_MUHURAT_SESSIONS` — the date **and** time change yearly per the NSE circular, so
-**update it every year**; a missing year yields no session), plus a Union-Budget
-session when Feb 1 falls on a weekend (Sat or Sun → 09:15–15:30). `is_trading_day`
-treats those dates as open; `_in_window` then trades **only** inside the session
-window and **only** for the matching `asset_type` (INDEX), so MCX legs stay flat
-during an NSE-only Muhurat. These sessions are code-defined (not from the NSE API),
-so `fetch_trading_holidays` re-derives them on every holiday-cache read — a stale
-`trading_holidays_YYYY.json` can never serve an outdated Muhurat date/time.
+**Special sessions — detected LIVE, not hardcoded.** Some NSE/MCX days are closed on
+the weekend/holiday calendar yet trade at non-standard hours (Diwali Muhurat, a
+weekend Union-Budget session, …). Their dates **and** times change every year, so the
+engine does NOT hardcode them — it reads the broker's own `market_status` each
+supervisor tick (`FyersAPI.get_market_status` → `EngineContext.market_status`, trusted
+only while newer than `MARKET_STATUS_STALE_S`). `symbol_worker._should_trade_now`
+trades iff the broker reports this asset's segment OPEN right now — so Muhurat / Budget
+/ any unusual session just works, and a surprise halt stops us. Its fallback (no fresh
+live reading) is the static schedule, but only on a genuine scheduled weekday — never a
+holiday/weekend without live confirmation. When the broker shows open on a
+statically-closed day, `application._refresh_special_sessions` injects TODAY into
+`special_sessions` (wide 00:00–23:59) so the historical fetch + `is_trading_day` include
+today's candles. Holidays still come from the NSE holiday API (auto-refreshed yearly);
+live status makes the trade gate broker-authoritative on top of that. `market_status` is
+metered USERINFO (one cheap poll per supervisor tick).
 
 ---
 
