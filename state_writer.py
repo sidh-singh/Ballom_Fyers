@@ -110,6 +110,29 @@ def write_ohlc_state(symbol: str, leg: str, side: str, tf: str,
         _prune_dir(OHLC_HIST_DIR)
 
 
+def backfill_ohlc_state(symbol: str, leg: str, tf: str, rows_by_date: dict) -> None:
+    """One-time: seed PAST-day OHLC snapshots for `symbol` from history, so the dashboard date
+    picker shows past charts immediately (not just going forward). `rows_by_date` maps
+    'YYYY-MM-DD' -> {t,o,h,l,c} lists. Merges into ohlc_hist/<date>.json; never overwrites a day
+    that already has this symbol's candles (a live-written day wins)."""
+    n = _OHLC_MAX_BARS
+    with _ohlc_lock:
+        for d, bars in rows_by_date.items():
+            path = OHLC_HIST_DIR / f"{d}.json"
+            data = _read_json(path)
+            if not isinstance(data, dict):
+                data = {}
+            if data.get(symbol, {}).get("t"):      # already populated (e.g. live) — keep it
+                continue
+            data[symbol] = {
+                "leg": leg, "side": "", "tf": tf, "active": False,
+                "t": list(bars["t"])[-n:], "o": list(bars["o"])[-n:], "h": list(bars["h"])[-n:],
+                "l": list(bars["l"])[-n:], "c": list(bars["c"])[-n:], "timestamp": _ts(),
+            }
+            _write_json_atomic(path, data)
+        _prune_dir(OHLC_HIST_DIR)
+
+
 # ── strategy log (date-partitioned) ─────────────────────────────────────────
 def log_strategy_event(symbol: str, leg: str, action: str,
                        qty: int = 0, pl: float = 0.0, details: str = "") -> None:
