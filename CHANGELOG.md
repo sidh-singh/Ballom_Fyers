@@ -1,5 +1,9 @@
 # CHANGELOG — `fyers_live` / `fyers_demo`
 
+## 2026-11-07 — Backfill past-day OHLC candles on startup (date-picker charts work immediately)
+
+The date picker showed past-day trades/P&L but **no price candles** for days before the upgrade, because per-day OHLC snapshots were only written going forward. Each worker now backfills on startup: one `fetch_historical_data` call (~1500 M5 index candles) per symbol, IST-aligned, grouped by date, writing `state/ohlc_hist/<date>.json` for each past day in the retention window (`state_writer.backfill_ohlc_state`; never overwrites a live-written day; best-effort, guarded to run once). So after a restart the last week's price charts appear right away. `symbol_worker._backfill_ohlc` uses the `"5"` (M5) resolution — identical on both HAM and RSI+MACD workers. All 12 branches. _Why: owner saw past-day charts with no candles; snapshots needed seeding from history, not just going forward._
+
 ## 2026-11-07 — Dashboard date picker (view the last 7 days) + 1-week data retention
 
 Added a **"View date"** dropdown (top-right): Today + the previous 6 days. Pick a past date and the whole dashboard switches to THAT day — the per-symbol OHLC price chart with that day's entry/exit markers, the day's closes / booked P&L, per-symbol P&L chart, and that day's strategy log. A banner marks the historical view; live-only panels (current RSI / SHA / slope signals, balance / equity, API usage) are shown for **Today only**, and the KPI row switches to the day's realised / gross / taxes / closes. Today stays fully live. The picker auto-rolls each day without losing the current selection (`_sync_viewdate`).
