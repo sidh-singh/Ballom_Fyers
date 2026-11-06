@@ -685,6 +685,10 @@ class FyersAPI:
                 with open(cache_file, "r") as f:
                     cached = json.load(f)
                 if cached.get("year") == year:
+                    # special_sessions are code-derived (Muhurat table + Budget rule), NOT from the
+                    # NSE API — always refresh them so a stale cache never serves an outdated
+                    # Muhurat date/time (e.g. after the yearly _MUHURAT_SESSIONS update).
+                    cached["special_sessions"] = FyersAPI._known_special_sessions(year)
                     return cached
             except Exception:
                 pass
@@ -770,22 +774,49 @@ class FyersAPI:
                 continue
         return valid
 
+    # ── Diwali Muhurat sessions — explicit per-year (date, open, close) from the NSE circular ──
+    #   ⚠️  UPDATE EVERY YEAR.  Muhurat's DATE *and* TIME are fixed by an NSE circular issued
+    #   ~2 weeks before Diwali, and both drift year to year (the slot even moved from evening
+    #   to afternoon in 2025).  So they cannot be computed — add the new row each year from the
+    #   circular.  A year with no row yields no Muhurat session (engine never trades a guess).
+    #   Next to add: Diwali 2027 ≈ 2027-10-29 (confirm exact date + time with the NSE circular).
+    _MUHURAT_SESSIONS = {
+        2024: ("2024-11-01", "18:00", "19:00"),   # Samvat 2081 — evening slot
+        2025: ("2025-10-21", "13:45", "14:45"),   # Samvat 2082 — moved to afternoon
+        2026: ("2026-11-08", "14:20", "15:30"),   # Samvat 2083 — continuous 2:20–3:30 pm
+    }
+
     @staticmethod
     def _known_special_sessions(year: int) -> list[dict]:
-        """Return known special trading sessions (Budget day, Diwali Muhurat)."""
-        sessions = []
+        """Days the NSE is OPEN that a plain weekend/holiday check would otherwise skip.
+
+        Covers (1) Diwali **Muhurat** trading and (2) a **Union Budget** session that lands
+        on a weekend.  Each entry is {date, name, open, close, asset_type}; the engine honours
+        `open`/`close` as that day's trade window (see symbol_worker._in_window and the
+        fetch_historical_data special-session map) and `asset_type` scopes it to one market.
+        Muhurat is table-driven (see ``_MUHURAT_SESSIONS`` — UPDATE YEARLY); the Budget rule is
+        computed (NSE ran full 09:15–15:30 sessions in 2015, 2020 and 2025).
+        """
+        sessions: list[dict] = []
+
+        # Diwali Muhurat — per-year table (afternoon/evening slot varies; see _MUHURAT_SESSIONS).
+        if year in FyersAPI._MUHURAT_SESSIONS:
+            d, o, c = FyersAPI._MUHURAT_SESSIONS[year]
+            sessions.append({
+                "date": d, "name": "Diwali Muhurat Trading",
+                "open": o, "close": c, "asset_type": "INDEX",
+            })
+
+        # Union Budget on a weekend — budget day is Feb 1 (since 2017); when it falls on a
+        # Sat/Sun the NSE runs a normal cash + F&O session (2015, 2020, 2025 precedents).
         feb1 = date(year, 2, 1)
-        if feb1.weekday() == 5:  # Saturday
+        if feb1.weekday() >= 5:  # Saturday or Sunday
             sessions.append({
                 "date": feb1.isoformat(),
-                "name": "Budget Day (Special Saturday)",
-                "open": "09:15", "close": "15:30",
+                "name": "Union Budget (Special Weekend Session)",
+                "open": "09:15", "close": "15:30", "asset_type": "INDEX",
             })
-        sessions.append({
-            "date": date(year, 10, 21).isoformat(),
-            "name": "Diwali Muhurat Trading",
-            "open": "18:15", "close": "19:30",
-        })
+
         return sessions
 
     @staticmethod
