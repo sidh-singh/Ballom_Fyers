@@ -164,8 +164,15 @@ SCAN_ROLL_DTE     = 14     # month-end roll threshold: pick the nearest MONTH-EN
                            # that is ≥ this many days out; if the current month-end is closer than
                            # this (< 2 weeks) roll to next month's month-end. See scan_best_pair.
 SCAN_MIN_OI       = 10000  # skip illiquid strikes (unless they have volume)
-SCAN_MAX_PREMIUM_PER_LOT = 30000   # ₹ — skip strikes whose premium × lot_size exceeds
-                                   # this (per-lot cost cap for a conservative start).
+SCAN_MAX_PREMIUM_PER_LOT = 30000   # ₹ — skip strikes whose premium × lot_size EXCEEDS this
+                                   # (per-lot cost cap). 0 = no cap.
+SCAN_MIN_PREMIUM_PER_LOT = 10000   # ₹ — skip strikes whose premium × lot_size is BELOW this,
+                                   # so we buy near-ATM options with real value / history (not
+                                   # cheap far-OTM). Band = [MIN, MAX] per lot. 0 = no floor.
+                                   # Per-symbol override: "min_premium_per_lot" in symbols.json.
+SCAN_ROUND_STRIKE_STEP = 1000      # ₹ — prefer strikes near a round multiple of this (the
+                                   # liquid, long-history strikes, e.g. NIFTY 24000/25000/26000).
+                                   # A scoring bonus, not a filter. Per-symbol: "round_strike_step".
                                    # 0 = no cap. Per-symbol override: "max_premium_per_lot"
                                    # in symbols.json.
 
