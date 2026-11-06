@@ -1,5 +1,9 @@
 # CHANGELOG — `fyers_live` / `fyers_demo`
 
+## 2026-11-06 — Port convention for future brokers: unregistered instance auto-takes next free port
+
+`scripts/common.sh` now defines `_NEXT_FREE_PORT` (8056) — an instance with no explicit `case` entry automatically boots on the next free port instead of colliding on 8050. LINUX_SETUP.md gains an "Adding a NEW broker" section: a new broker branch takes the next sequential dashboard port (n+1 above the current max; 8056, 8057, ...), registered in the `case` + `_NEXT_FREE_PORT` bump; never reuse 8050-8055. Includes an explicit note telling an AI assistant to apply the rule automatically. 6 `linux_` branches. _Why: owner will add more brokers later (with Claude's help) and wants the port convention followed even if unmentioned._
+
 ## 2026-11-06 — Preset dashboard ports per branch + real server details in docs
 
 Each `linux_` branch now has a distinct **preset dashboard PORT** (fyers_demo 8050, fyers_live 8051, netting_demo 8052, netting_live 8053, hedging_demo 8054, hedging_live 8055) via a per-instance `case` in `scripts/common.sh` — so you can run several bots at once with zero port clashes and no manual `PORT=`. Override still works. README + LINUX_SETUP.md updated: each branch's dashboard URL + SSH tunnel show its own port, section 7 reflects the presets, and the real server (`root@80.150.138.80`, SSH port 22) is filled into the login + tunnel examples. 6 `linux_` branches. _Why: owner runs multiple bots and wanted preset non-colliding ports + their server in the guide._
