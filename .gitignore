@@ -7,3 +7,7 @@ fyersApi.log
 fyersRequests.log
 .venv/
 venv/
+
+# your live config — created from symbols.example.json on first run, never tracked
+# so a `git pull` / update can never overwrite your edited symbols & units.
+/symbols.json
