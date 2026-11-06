@@ -7,6 +7,10 @@ Format: `YYYY-MM-DD` — change — _why_.
 
 ---
 
+## 2026-11-07 — NIFTY round-strike grid = 500s (famous strikes), per owner
+
+The synced scanner defaulted every underlying to a 1000 round-step; NIFTY should prefer the **500-grid** (owner's "famous strikes": 24000/24500/25000/25500/26000, not just 24000/25000/26000). Added `_default_round_step(underlying)`: when symbols.json gives no `round_strike_step`, NIFTY/BANKNIFTY default to **500** and GOLD/SILVER to **1000**; an explicit `round_strike_step` in symbols.json still overrides (incl. 0 = off). Verified: 24500/25500 now score the full round bonus (1.0); granular 25050/25100/25250 are deprioritised (0.80/0.60/0.00). All 12 branches. _Why: owner confirmed the 500-grid for NIFTY._
+
 ## 2026-11-07 — Round-strike + min-premium scanner ported to HAM: all 12 scanners in sync
 
 The round-strike preference and per-lot premium BAND only ever reached the 8 RSI+MACD branches' scanner; the 4 HAM branches (fyers_live/demo + their linux) still ran the plain moneyness/liquidity scorer (same dead-code gap as the month-end fix). Ported the full `scan_best_pair` + `_score` from the RSI+MACD scanner to HAM so strike selection is identical on all 12: `_roundness(strike, step)` bonus (prefer round, liquid, long-history strikes), per-lot premium **BAND** (skip premium×lot > max **or** < min), rebalanced weights (moneyness .30 / roundness .20 / spread .20 / OI .20 / volume .10). Added `SCAN_MIN_PREMIUM_PER_LOT=10000` + `SCAN_ROUND_STRIKE_STEP=1000` to HAM `constants.py`. `scanner.py` is now **byte-identical across all 12 branches**. Round step is per-symbol (`round_strike_step` in symbols.json) with a 1000 default. _Why: round strikes were a prior "all 12" requirement but were only half-wired; owner asked to sync all 12._
