@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import logging
 import threading
-from datetime import time as dt_time
 from time import monotonic
 
 from constants import (
@@ -104,9 +103,7 @@ class SymbolWorker(threading.Thread):
         if self.ctx.brake_event.is_set():
             return
         self._resolve_underlying()
-        if not self.ctx.is_trading_day(now_ist().date()):
-            return
-        if not self._in_window():
+        if not self._should_trade_now():
             self._persist_ohlc_offhours()     # keep this symbol's chart populated after its market closes
             return
 
@@ -572,29 +569,28 @@ class SymbolWorker(threading.Thread):
             self._resolved_on = today
 
     # ── misc ────────────────────────────────────────────────────────────────
+    def _should_trade_now(self) -> bool:
+        """Master trade gate. PRIMARY: the broker's LIVE segment status — trade iff this asset's
+        exchange says OPEN right now. That auto-covers Diwali Muhurat, Union Budget and ANY unusual
+        session with zero hardcoded dates/times, and also stops us dead on a surprise closure.
+        FALLBACK (no fresh live reading): the static schedule, but ONLY on a genuine scheduled day
+        (weekday & not an NSE holiday) — so without live confirmation we never trade a would-be
+        special day, and never trade a holiday."""
+        live = self.ctx.is_segment_open(self.asset_type)   # True / False / None(unknown)
+        if live is not None:
+            return live
+        today = now_ist().date()
+        if today.weekday() >= 5 or today.isoformat() in self.ctx.holidays:
+            return False
+        return self._in_window()
+
     def _in_window(self) -> bool:
-        now_t = now_ist().time()
-        # Special session (Diwali Muhurat / weekend Union-Budget): a day the market is OPEN at
-        # non-standard hours. Trade ONLY in that session's own window, and ONLY for the asset the
-        # session applies to — other assets stay flat that day (e.g. MCX on an NSE-only muhurat).
-        specials = [s for s in (getattr(self.ctx, "special_sessions", None) or [])
-                    if s.get("date") == now_ist().date().isoformat()]
-        if specials:
-            for s in specials:
-                if s.get("asset_type", "INDEX") != self.asset_type:
-                    continue
-                try:
-                    o = dt_time(*map(int, s["open"].split(":")))
-                    c = dt_time(*map(int, s["close"].split(":")))
-                except (KeyError, ValueError, TypeError):
-                    return False
-                return o <= now_t <= c
-            return False  # special-session day, but none for this asset → don't trade it today
+        """Static schedule check (fallback only — the live broker status is the primary gate)."""
         if self.asset_type == "COMMODITY" and self._session:
             o, c = self._session
-            return o <= now_t <= c
+            return o <= now_ist().time() <= c
         hrs = MARKET_HOURS.get(self.asset_type, MARKET_HOURS["INDEX"])
-        return hrs["open"] <= now_t <= hrs["close"]
+        return hrs["open"] <= now_ist().time() <= hrs["close"]
 
     @staticmethod
     def _ok(resp) -> bool:
