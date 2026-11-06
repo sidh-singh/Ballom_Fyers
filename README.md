@@ -44,7 +44,7 @@ It binds to `127.0.0.1` only (not the internet). From your laptop, open an SSH t
 
 ### Running more than one bot (live + demo, or future brokers)
 Every bot is an isolated **instance** (own data folder, venv, port, service) — they never clash.
-See [`LINUX_SETUP.md` §7](LINUX_SETUP.md). Example: `PORT=8051 bash setup.sh` for a second one.
+See [`LINUX_SETUP.md` §7](LINUX_SETUP.md). Each `linux_` branch is **preset to its own port** (8050–8055), so you can run several together with no clashes — no `PORT=` needed.
 
 > ⚠ **Python 3.11 required — not 3.13.** Debian 13's system Python is 3.13; `setup.sh` fetches 3.11
 > via `uv` automatically. (`fyers-apiv3`'s `aiohttp` pin has no 3.13 wheel.)
