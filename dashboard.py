@@ -25,13 +25,15 @@ from collections import defaultdict
 
 import dash
 from dash import dcc, html
-from dash.dependencies import Input, Output
+from dash.dependencies import Input, Output, State
+from datetime import timedelta
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 from constants import (
     STATE_DIR, API_USAGE_FILE, APP_STATUS_FILE, STRATEGY_LOG_DIR,
-    SIGNAL_STATE_FILE, ACCOUNT_STATE_FILE, OHLC_STATE_FILE, API_LIMITS, API_LIMITS_PRIME,
+    SIGNAL_STATE_FILE, ACCOUNT_STATE_FILE, OHLC_STATE_FILE, OHLC_HIST_DIR,
+    HISTORY_RETENTION_DAYS, API_LIMITS, API_LIMITS_PRIME,
     RSI_OVERSOLD, RSI_OVERBOUGHT, now_ist,
     ENTRY_S, BOOK_S, FORCE_CLOSE_S,
     OPEN_SCORE_WEIGHTS, BOOK_SCORE_WEIGHTS, FORCE_CLOSE_SCORE_WEIGHTS,
@@ -56,6 +58,21 @@ RSI_ORDER = ["TIMEFRAME_M1", "TIMEFRAME_M5", "TIMEFRAME_M15", "TIMEFRAME_M30",
 RSI_LABEL = {"TIMEFRAME_M1": "1m", "TIMEFRAME_M5": "5m", "TIMEFRAME_M15": "15m",
              "TIMEFRAME_M30": "30m", "TIMEFRAME_H1": "1h", "TIMEFRAME_H4": "4h",
              "TIMEFRAME_H6": "6h"}
+
+
+def _today_iso() -> str:
+    return now_ist().date().isoformat()
+
+
+def _recent_dates(n: int = HISTORY_RETENTION_DAYS):
+    """Date-picker options: today + the previous (n-1) days (newest first)."""
+    t = now_ist().date()
+    opts = []
+    for i in range(n):
+        d = t - timedelta(days=i)
+        label = "Today" if i == 0 else ("Yesterday" if i == 1 else d.strftime("%a %d %b"))
+        opts.append({"label": label, "value": d.isoformat()})
+    return opts
 
 
 def _read(path, default=None):
@@ -102,27 +119,36 @@ def _chip(text, color, bg=None):
 
 
 # ── account KPIs ─────────────────────────────────────────────────────────────
-def kpi_row():
+def kpi_row(view_date=None, historical=False):
     acct = _read(ACCOUNT_STATE_FILE, {}) or {}
     hist = _read(PROFIT_HISTORY, []) or []
-    today = now_ist().date().isoformat()
-    closes_today = [r for r in hist if r.get("action") == "CLOSE" and r.get("date") == today]
-    realized = round(sum(float(r.get("net_pl", r.get("effective_pl", 0))) for r in closes_today), 2)
-    taxes = round(sum(float(r.get("charges", 0)) for r in closes_today), 2)
-    bal = float(acct.get("balance", 0))
-    eq = float(acct.get("equity", bal))
-    margin = float(acct.get("margin_used", 0))
-    unreal = float(acct.get("unrealized", 0))
-    total = round(realized + unreal, 2)
-    tiles = [
-        ("Balance", f"₹{bal:,.0f}", C["text"]),
-        ("Equity", f"₹{eq:,.0f}", C["teal"]),
-        ("Margin used", f"₹{margin:,.0f}", C["amber"]),
-        ("Unrealised", f"₹{unreal:,.2f}", _pl_color(unreal)),
-        ("Realised net (today)", f"₹{realized:,.2f}", _pl_color(realized)),
-        ("Taxes (today)", f"₹{taxes:,.2f}", C["purple"]),
-        ("Total P&L", f"₹{total:,.2f}", _pl_color(total)),
-    ]
+    view = view_date or now_ist().date().isoformat()
+    closes_v = [r for r in hist if r.get("action") == "CLOSE" and r.get("date") == view]
+    realized = round(sum(float(r.get("net_pl", r.get("effective_pl", 0))) for r in closes_v), 2)
+    taxes = round(sum(float(r.get("charges", 0)) for r in closes_v), 2)
+    if historical:
+        gross = round(sum(float(r.get("effective_pl", 0)) for r in closes_v), 2)
+        tiles = [
+            (f"Realised net ({view})", f"₹{realized:,.2f}", _pl_color(realized)),
+            (f"Gross ({view})", f"₹{gross:,.2f}", _pl_color(gross)),
+            (f"Taxes ({view})", f"₹{taxes:,.2f}", C["purple"]),
+            (f"Closes ({view})", f"{len(closes_v)}", C["text"]),
+        ]
+    else:
+        bal = float(acct.get("balance", 0))
+        eq = float(acct.get("equity", bal))
+        margin = float(acct.get("margin_used", 0))
+        unreal = float(acct.get("unrealized", 0))
+        total = round(realized + unreal, 2)
+        tiles = [
+            ("Balance", f"₹{bal:,.0f}", C["text"]),
+            ("Equity", f"₹{eq:,.0f}", C["teal"]),
+            ("Margin used", f"₹{margin:,.0f}", C["amber"]),
+            ("Unrealised", f"₹{unreal:,.2f}", _pl_color(unreal)),
+            ("Realised net (today)", f"₹{realized:,.2f}", _pl_color(realized)),
+            ("Taxes (today)", f"₹{taxes:,.2f}", C["purple"]),
+            ("Total P&L", f"₹{total:,.2f}", _pl_color(total)),
+        ]
     cells = [_card([
         html.Div(lbl, style={"color": C["dim"], "fontSize": "11px",
                              "textTransform": "uppercase", "letterSpacing": "0.6px"}),
@@ -503,31 +529,46 @@ def _position_block(pos):
     ], style={"margin": "6px 0"})
 
 
-def symbol_panel(symbol, s, closes, oh=None, events=None, show_avg=False):
-    sig = s.get("signal", "DO_NOTHING")
-    variant = (s.get("variant") or "").upper()
-    head = html.Div([
-        html.Span(symbol, style={"color": C["text"], "fontSize": "18px", "fontWeight": "800"}),
-        html.Span(s.get("asset_type", ""), style={"color": C["muted"], "fontSize": "11px",
-                  "marginLeft": "8px"}),
-        html.Span(_chip(sig, _sig_color(sig)), style={"marginLeft": "12px"}),
-        html.Span(_chip(variant, C["teal"]) if variant else "", style={"marginLeft": "8px"}),
-        html.Span(f"units {s.get('units','-')}", style={"color": C["dim"], "fontSize": "12px",
-                  "marginLeft": "auto"}),
-    ], style={"display": "flex", "alignItems": "center", "marginBottom": "10px"})
-    left = _card([
-        head,
-        _pair_block(s.get("pair")),
-        html.Div(style={"height": "10px"}),
-        _slope_block(s),
-        _rsi_block(s.get("rsi", {})),
-        _position_block(s.get("position")),
-    ], extra={"flex": "1.1"})
+def symbol_panel(symbol, s, closes, oh=None, events=None, show_avg=False,
+                 historical=False, view_label="today"):
+    if historical:
+        # past day: live slopes/RSI/position are "now" only — show the symbol + a note instead.
+        left = _card([
+            html.Div([
+                html.Span(symbol, style={"color": C["text"], "fontSize": "18px", "fontWeight": "800"}),
+                html.Span(s.get("asset_type", ""), style={"color": C["muted"], "fontSize": "11px",
+                          "marginLeft": "8px"}),
+                html.Span(_chip(f"HISTORICAL {view_label}", C["amber"]), style={"marginLeft": "12px"}),
+            ], style={"display": "flex", "alignItems": "center", "marginBottom": "10px"}),
+            html.Div("Live signals (slopes / RSI / position) are shown for Today only. "
+                     "The booked P&L and price chart below are for the selected date.",
+                     style={"color": C["muted"], "fontSize": "12px", "lineHeight": "1.5"}),
+        ], extra={"flex": "1.1"})
+    else:
+        sig = s.get("signal", "DO_NOTHING")
+        variant = (s.get("variant") or "").upper()
+        head = html.Div([
+            html.Span(symbol, style={"color": C["text"], "fontSize": "18px", "fontWeight": "800"}),
+            html.Span(s.get("asset_type", ""), style={"color": C["muted"], "fontSize": "11px",
+                      "marginLeft": "8px"}),
+            html.Span(_chip(sig, _sig_color(sig)), style={"marginLeft": "12px"}),
+            html.Span(_chip(variant, C["teal"]) if variant else "", style={"marginLeft": "8px"}),
+            html.Span(f"units {s.get('units','-')}", style={"color": C["dim"], "fontSize": "12px",
+                      "marginLeft": "auto"}),
+        ], style={"display": "flex", "alignItems": "center", "marginBottom": "10px"})
+        left = _card([
+            head,
+            _pair_block(s.get("pair")),
+            html.Div(style={"height": "10px"}),
+            _slope_block(s),
+            _rsi_block(s.get("rsi", {})),
+            _position_block(s.get("position")),
+        ], extra={"flex": "1.1"})
     g = sum(float(r.get("effective_pl", 0)) for r in closes)
     tx = sum(float(r.get("charges", 0)) for r in closes)
     n = round(sum(float(r.get("net_pl", r.get("effective_pl", 0))) for r in closes), 2)
     booked_line = html.Div([
-        html.Span(f"{len(closes)} closes today", style={"color": C["dim"], "fontSize": "11px"}),
+        html.Span(f"{len(closes)} closes", style={"color": C["dim"], "fontSize": "11px"}),
         html.Span(f"gross ₹{g:,.0f}", style={"color": C["dim"], "fontSize": "11px", "marginLeft": "10px"}),
         html.Span(f"tax ₹{tx:,.0f}", style={"color": C["purple"], "fontSize": "11px", "marginLeft": "10px"}),
         html.Span(f"net ₹{n:,.2f}", style={"color": _pl_color(n), "fontSize": "13px",
@@ -535,13 +576,15 @@ def symbol_panel(symbol, s, closes, oh=None, events=None, show_avg=False):
     ], style={"padding": "4px 10px 2px"})
     right = _card([booked_line, booking_chart(symbol, closes)], pad="8px", extra={"flex": "1.4"})
     top = html.Div([left, right], style={"display": "flex", "gap": "14px", "marginBottom": "10px"})
-    grids = [_pivot_grid(s.get("rsi_graphs"), s.get("macd_graphs"),
-                         "INDEX pivot slopes (entry)  ·  peak → now, per timeframe")]
-    leg_rg, leg_mg = s.get("leg_rsi_graphs"), s.get("leg_macd_graphs")
-    if leg_rg or leg_mg:
-        side = (s.get("position") or {}).get("side", "")
-        grids.append(_pivot_grid(leg_rg, leg_mg,
-                     f"LEG {side} pivot slopes (book / force-close)  ·  the option's own chart"))
+    grids = []
+    if not historical:   # live pivot-slope grids are today-only
+        grids.append(_pivot_grid(s.get("rsi_graphs"), s.get("macd_graphs"),
+                     "INDEX pivot slopes (entry)  ·  peak → now, per timeframe"))
+        leg_rg, leg_mg = s.get("leg_rsi_graphs"), s.get("leg_macd_graphs")
+        if leg_rg or leg_mg:
+            side = (s.get("position") or {}).get("side", "")
+            grids.append(_pivot_grid(leg_rg, leg_mg,
+                         f"LEG {side} pivot slopes (book / force-close)  ·  the option's own chart"))
     price_card = _card([ohlc_chart(symbol, oh, events or [], show_avg)], pad="6px 8px",
                        extra={"marginBottom": "10px"})
     return html.Div([top, price_card] + grids, style={"marginBottom": "16px"})
@@ -724,23 +767,32 @@ def ohlc_chart(symbol, oh, events, show_avg):
 
 
 # ── status + log ─────────────────────────────────────────────────────────────
-def status_strip():
+def status_strip(view_date=None, historical=False):
     st = _read(APP_STATUS_FILE, {}) or {}
     status = str(st.get("status", "unknown")).upper()
     col = {"RUNNING": C["green"], "SCANNING": C["purple"], "BRAKE": C["amber"],
            "AUTH_FAILED": C["red"], "STOPPED": C["muted"]}.get(status, C["dim"])
-    return _card([html.Div([
+    strip = _card([html.Div([
         html.Span("●", style={"color": col, "fontSize": "16px", "marginRight": "8px"}),
         html.Span(f"Engine {status}", style={"color": C["text"], "fontWeight": "700"}),
         html.Span(st.get("message", ""), style={"color": C["dim"], "marginLeft": "14px", "fontSize": "13px"}),
         html.Span(f"updated {st.get('timestamp','—')}", style={"color": C["muted"],
                   "marginLeft": "auto", "fontSize": "11px"}),
     ], style={"display": "flex", "alignItems": "center"})], pad="12px 18px")
+    if historical:
+        banner = _card([html.Div([
+            html.Span(f"🕑 VIEWING {view_date}", style={"color": C["amber"], "fontWeight": "800"}),
+            html.Span("historical — trades & price chart are for that day; live signals / balance / "
+                      "API usage below are current-only",
+                      style={"color": C["dim"], "marginLeft": "12px", "fontSize": "12px"}),
+        ], style={"display": "flex", "alignItems": "center", "flexWrap": "wrap"})], pad="10px 18px")
+        return html.Div([banner, html.Div(style={"height": "10px"}), strip])
+    return strip
 
 
-def log_table():
-    today = now_ist().strftime("%Y-%m-%d")
-    entries = _read(STRATEGY_LOG_DIR / f"{today}.json", []) or []
+def log_table(view_date=None):
+    view = view_date or now_ist().strftime("%Y-%m-%d")
+    entries = _read(STRATEGY_LOG_DIR / f"{view}.json", []) or []
     badge = {"ENTRY": C["green"], "ADD": C["amber"], "CLOSE_SENT": C["purple"],
              "CLOSE_BOOKED": C["purple"], "SCAN_EMPTY": C["grey"]}
     rows = []
@@ -757,7 +809,7 @@ def log_table():
         html.Div("STRATEGY LOG", style={"color": C["dim"], "fontSize": "12px",
                  "margin": "0 0 8px", "letterSpacing": "0.6px"}),
         html.Table(rows, style={"width": "100%", "borderCollapse": "collapse"})
-        if rows else html.Div("No events today.", style={"color": C["muted"]}),
+        if rows else html.Div(f"No events for {view}.", style={"color": C["muted"]}),
     ])
 
 
@@ -832,7 +884,12 @@ app.layout = html.Div([
         html.Span("DEMO" if IS_DEMO else "LIVE",
                   style={"color": C["amber"] if IS_DEMO else C["red"], "fontWeight": "800",
                          "marginLeft": "12px", "fontSize": "13px"}),
-    ], style={"display": "flex", "alignItems": "baseline", "marginBottom": "14px"}),
+        html.Div([
+            html.Span("View date", style={"color": C["muted"], "fontSize": "11px", "marginRight": "8px"}),
+            dcc.Dropdown(id="viewdate", options=_recent_dates(), value=_today_iso(),
+                         clearable=False, style={"width": "190px", "fontSize": "13px"}),
+        ], style={"marginLeft": "auto", "display": "flex", "alignItems": "center", "minWidth": "260px"}),
+    ], style={"display": "flex", "alignItems": "center", "marginBottom": "14px"}),
     html.Div(id="status"),
     html.Div(id="kpis", style={"marginTop": "14px"}),
     html.Div(id="api", style={"marginTop": "16px"}),
@@ -844,19 +901,33 @@ app.layout = html.Div([
 
 
 @app.callback(
+    Output("viewdate", "options"), Output("viewdate", "value"),
+    Input("tick", "n_intervals"), State("viewdate", "value"),
+)
+def _sync_viewdate(_, cur):
+    """Keep the date-picker options rolling (today + last 6 days) without losing the user's pick."""
+    opts = _recent_dates()
+    vals = [o["value"] for o in opts]
+    return opts, (cur if cur in vals else _today_iso())
+
+
+@app.callback(
     Output("status", "children"), Output("kpis", "children"), Output("api", "children"),
     Output("symbols", "children"), Output("log", "children"), Output("api_limits", "children"),
-    Input("tick", "n_intervals"),
+    Input("viewdate", "value"), Input("tick", "n_intervals"),
 )
-def _refresh(_):
+def _refresh(view_date, _):
+    today = _today_iso()
+    view = view_date or today
+    historical = view != today
     signals = _read(SIGNAL_STATE_FILE, {}) or {}
     hist = _read(PROFIT_HISTORY, []) or []
-    ohlc = _read(OHLC_STATE_FILE, {}) or {}
-    today = now_ist().date().isoformat()
+    # OHLC for the selected day (today's dated file is live-updated; past days are snapshots)
+    ohlc = _read(OHLC_HIST_DIR / f"{view}.json", {}) or {}
     closes_by_asset = defaultdict(list)
-    events_by_asset = defaultdict(list)      # ALL today's fills per asset (NIFTY/GOLD/SILVER), every leg
+    events_by_asset = defaultdict(list)      # fills per asset (NIFTY/GOLD/SILVER), every leg, for `view`
     for r in hist:
-        if r.get("date") != today:
+        if r.get("date") != view:
             continue
         act = r.get("action")
         asset = _asset_of(r.get("symbol", ""))
@@ -867,13 +938,24 @@ def _refresh(_):
     for a in events_by_asset:
         events_by_asset[a].sort(key=lambda e: e.get("timestamp", ""))
 
-    panels = [symbol_panel(sym, s, closes_by_asset.get(sym, []),
-                           ohlc.get(sym), events_by_asset.get(sym, []), SHOW_AVG_POSITION)
-              for sym, s in signals.items() if isinstance(s, dict)]
-    if not panels:
-        panels = [html.Div("Waiting for engine signals…", style={
-            "color": C["muted"], "padding": "28px", "textAlign": "center"})]
-    return status_strip(), kpi_row(), api_panel(), panels, log_table(), api_limits_panel()
+    if historical:
+        syms = sorted(set(list(ohlc.keys()) + list(events_by_asset.keys()) + list(closes_by_asset.keys())))
+        panels = [symbol_panel(sym, signals.get(sym, {}), closes_by_asset.get(sym, []),
+                               ohlc.get(sym), events_by_asset.get(sym, []), SHOW_AVG_POSITION,
+                               historical=True, view_label=view)
+                  for sym in syms]
+        if not panels:
+            panels = [html.Div(f"No trades or saved chart for {view}.", style={
+                "color": C["muted"], "padding": "28px", "textAlign": "center"})]
+    else:
+        panels = [symbol_panel(sym, s, closes_by_asset.get(sym, []),
+                               ohlc.get(sym), events_by_asset.get(sym, []), SHOW_AVG_POSITION)
+                  for sym, s in signals.items() if isinstance(s, dict)]
+        if not panels:
+            panels = [html.Div("Waiting for engine signals…", style={
+                "color": C["muted"], "padding": "28px", "textAlign": "center"})]
+    return (status_strip(view, historical), kpi_row(view, historical), api_panel(),
+            panels, log_table(view), api_limits_panel())
 
 
 if __name__ == "__main__":
