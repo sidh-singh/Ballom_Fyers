@@ -106,6 +106,7 @@ class SymbolWorker(threading.Thread):
         if not self.ctx.is_trading_day(now_ist().date()):
             return
         if not self._in_window():
+            self._persist_ohlc_offhours()     # keep this symbol's chart populated after its market closes
             return
 
         if self.active and self.pending_close:   # close-first priority (pt 6)
@@ -181,6 +182,19 @@ class SymbolWorker(threading.Thread):
             tstr = [tstr[i] for i in idx]; o = [o[i] for i in idx]
             h = [h[i] for i in idx]; l = [l[i] for i in idx]; c = [c[i] for i in idx]
         write_ohlc_state(self.symbol, self._active_underlying, "", "M5", tstr, o, h, l, c, bool(self.active))
+
+    def _persist_ohlc_offhours(self) -> None:
+        """Market closed for this symbol: persist today's index candles ONCE (they don't change after
+        the close) so its dashboard chart stays visible while other symbols still trade."""
+        if getattr(self, "_offh_day", None) == now_ist().date():
+            return
+        try:
+            df = self._frame(self._active_underlying, "TIMEFRAME_M5")
+            if df is not None and len(df):
+                self._persist_ohlc(df)
+                self._offh_day = now_ist().date()
+        except Exception as e:
+            logger.debug("[%s] off-hours ohlc persist failed: %s", self.symbol, e)
 
     # ── leg state → strategy inputs (cost-basis P&L) ────────────────────────
     def _leg_state_and_threshold(self):
