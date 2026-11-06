@@ -357,6 +357,26 @@ class FyersAPI:
             if 0.01 <= m <= 0.07: return 0.7
             return 0.4
 
+        def _round_step(sym):
+            """Preferred strike grid per underlying — 'famous' round strikes that carry data."""
+            s = sym.upper()
+            if "SILVER" in s: return 1000
+            if "GOLD" in s:   return 1000
+            if "NIFTY" in s:  return 500          # covers NIFTY / BANKNIFTY
+            return 0                              # unknown → no round preference
+
+        def _round_score(strike, step):
+            """Strongly prefer round strikes (multiples of step); granular ones usually lack data."""
+            if not step:
+                return 1.0
+            r = strike % step
+            d = min(r, step - r)                  # distance to the nearest round strike
+            if d == 0:           return 1.0
+            if d <= step * 0.1:  return 0.5
+            return 0.12                           # far off the round grid → heavily deprioritised
+
+        _rstep = _round_step(symbol)
+
         # ── retry loop ─────────────────────────────────────────────────────────
         _log = []  # debug breadcrumbs
 
@@ -406,16 +426,26 @@ class FyersAPI:
                 parsed = [(d, e) for d, e in parsed if d <= cutoff]
                 _log.append(f"expiries_total={len(parsed)}")
 
+                # Month-END expiries only: the LAST expiry in each calendar month (NSE monthly =
+                # last weekly of the month). parsed is ascending, so the last write per month wins.
+                monthly = {}
+                for _d, _e in parsed:
+                    monthly[(_d.year, _d.month)] = (_d, _e)
+                monthlies = sorted(monthly.values(), key=lambda x: x[0])
                 if expiry_mode == "NEAR_MONTH":
-                    expiry_list = parsed[:1]
+                    expiry_list = monthlies[:1]
                 elif expiry_mode == "NEXT_MONTH":
-                    expiry_list = parsed[1:2]
+                    expiry_list = monthlies[1:2]
                 else:
-                    expiry_list = [
-                        (d, e) for d, e in parsed
-                        if min_days_to_expiry <= (d - datetime.now()).days <= 60
-                    ] or parsed
-                _log.append(f"expiries_filtered={len(expiry_list)}")
+                    # closest month-end that is >= min_days_to_expiry (2 weeks) away; if the nearest
+                    # month-end is inside 2 weeks, roll to next month's — easier, data-rich pairs.
+                    _future = [(d, e) for d, e in monthlies
+                               if (d - datetime.now()).days >= min_days_to_expiry]
+                    expiry_list = _future[:1] or monthlies[:1]
+                _log.append(
+                    f"monthly_expiries={len(monthlies)} "
+                    f"chosen={[d.strftime('%d%b') for d, _ in expiry_list]}"
+                )
 
                 ce_candidates = []
                 pe_candidates = []
@@ -530,7 +560,9 @@ class FyersAPI:
                             + _normalize(oi_change.clip(lower=0)) * 0.15
                             + price_momentum * 0.10
                             + _normalize(np.log1p(sub["volume"])) * 0.10
-                        ).clip(0, 1)
+                        ).clip(0, 1) * sub["strike_price"].apply(
+                            lambda x: _round_score(x, _rstep)
+                        )
 
                         top_n = sub.nlargest(3, "score")
                         best_idx = top_n.index[0]
