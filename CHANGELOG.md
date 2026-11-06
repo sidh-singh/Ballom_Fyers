@@ -1,5 +1,9 @@
 # CHANGELOG — `fyers_live` / `fyers_demo`
 
+## 2026-11-07 — Faster dashboard refresh: account/P&L cadence 30s → 10s
+
+The dashboard already polls every 5 s and reads JSON state, and per-symbol signals already refresh every `WORKER_IDLE_SLEEP`=8 s — but the **account block** (balance / equity / unrealized P&L / margin / open-position count / app-status) is written once per Loop-1 supervisor tick, which slept `SUPERVISOR_TICK`=30 s. So those values felt ~30 s stale. Dropped `SUPERVISOR_TICK` 30 → **10 s**, so account/P&L now refreshes ~10 s (dashboard shows it within 5–10 s). Cost: `_write_account` (funds+positions = 2 USERINFO) + `market_status` (1) per tick → ~18 USERINFO/min during market hours, far under the 200/min standard-plan cap (and off-hours `_write_account` still skips the API, reusing the last snapshot). Raise `SUPERVISOR_TICK` again if several bots share one Fyers account. All 12 branches. _Why: owner saw the dashboard values refreshing only ~every 30 s and asked to bring it to ~10 s._
+
 ## 2026-11-07 — NIFTY round-strike grid = 500s (famous strikes), per owner
 
 The synced scanner defaulted every underlying to a 1000 round-step; NIFTY should prefer the **500-grid** (owner's "famous strikes": 24000/24500/25000/25500/26000, not just 24000/25000/26000). Added `_default_round_step(underlying)`: when symbols.json gives no `round_strike_step`, NIFTY/BANKNIFTY default to **500** and GOLD/SILVER to **1000**; an explicit `round_strike_step` in symbols.json still overrides (incl. 0 = off). Verified: 24500/25500 now score the full round bonus (1.0); granular 25050/25100/25250 are deprioritised (0.80/0.60/0.00). All 12 branches. _Why: owner confirmed the 500-grid for NIFTY._
