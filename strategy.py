@@ -157,6 +157,7 @@ class Strategy:
                          buy_positions, sell_positions, times,
                          close_threshold=2,
                          rsi_value=None, rsi_mtf=None, slopes=None, leg_slopes=None,
+                         cand_leg_slopes=None, leg_slopes_raw=None,
                          entry_allowed=True, exit_allowed=True):
         """
         RSI+MACD slope strategy (NETTING / book-score profit exit). Three per-section weighted
@@ -220,13 +221,41 @@ class Strategy:
         # BOOK + FORCE-CLOSE exits are read on the ACTIVE LEG's own option chart (leg_slopes).
         book_score = self._weighted_score(leg_slopes, BOOK_SCORE_WEIGHTS, grey_fill=True)
         fc_leg = self._weighted_score(leg_slopes, FORCE_CLOSE_SCORE_WEIGHTS)
+        # Grey-slope fallback (owner fix): the force-close M15 slope can sit grey (no pivot) too long
+        # so the basket never closes. If M15 is grey, fall back to the leg M5; if M5 is also grey,
+        # take out the RSI OB/OS regime boundary (unbounded raw slopes) and read M15 then M5.
+        if fc_leg == 0:
+            fc_leg = self._weighted_score(leg_slopes, {'M5': 1})
+        if fc_leg == 0 and leg_slopes_raw:
+            fc_leg = (self._weighted_score(leg_slopes_raw, FORCE_CLOSE_SCORE_WEIGHTS)
+                      or self._weighted_score(leg_slopes_raw, {'M5': 1}))
         # Dashboard FC meter shows the leg FC when in a basket, else the index entry-gate FC.
         fc_score = fc_leg if in_position else fc_gate
 
-        # Fresh-entry direction (agreement gate, on the index).
+        # Fresh-entry direction (agreement gate, on the index) — kept for the dashboard/compare.
         entry_direction = self._entry_direction(open_score, fc_gate)
         open_wants = 'BUY' if open_score >= ENTRY_S else ('SELL' if open_score <= -ENTRY_S else None)
         entry_chop_block = bool(open_wants and entry_direction is None)
+
+        # NEW fresh-entry gate (owner): INDEX H4 both-directional + the CANDIDATE option leg's OWN
+        # H4 and M5 both +ve, and the leg's M15 (force-close TF) not already reversing — never open
+        # into an immediate force-close (anti-vibration). This replaces the index-only fresh entry.
+        def _both_pos(sl, tf):
+            v = (sl or {}).get(tf, {})
+            return ((v.get('rsi') or {}).get('sign', 0) > 0) and ((v.get('macd') or {}).get('sign', 0) > 0)
+
+        def _both_neg(sl, tf):
+            v = (sl or {}).get(tf, {})
+            return ((v.get('rsi') or {}).get('sign', 0) < 0) and ((v.get('macd') or {}).get('sign', 0) < 0)
+
+        def _tf_against(sl, tf):
+            v = (sl or {}).get(tf, {})
+            return ((v.get('rsi') or {}).get('sign', 0) < 0) or ((v.get('macd') or {}).get('sign', 0) < 0)
+
+        _leg_entry_ok = (_both_pos(cand_leg_slopes, 'H4') and _both_pos(cand_leg_slopes, 'M5')
+                         and not _tf_against(cand_leg_slopes, 'M15'))
+        new_entry = ('BUY' if (_both_pos(slopes, 'H4') and _leg_entry_ok)
+                     else ('SELL' if (_both_neg(slopes, 'H4') and _leg_entry_ok) else None))
 
         # DCA ladder-add gate: average in only while the OPEN (index) score is not strongly adverse.
         buy_add_ok = open_score > -LADDER_S
@@ -244,10 +273,10 @@ class Strategy:
         sell_pp = exit_allowed and (sell_profit > profit_protect_min) and (book_score >= BOOK_S)
 
         if buy_count == 0 and sell_count == 0:
-            # Fresh entry (single position; opens on the weighted score), cooldown-gated.
-            if entry_allowed and entry_direction == 'BUY':
+            # Fresh entry: index-H4 + candidate-leg-H4 + leg-M5 gate (anti-vibration), cooldown-gated.
+            if entry_allowed and new_entry == 'BUY':
                 buy_status = Signal.BUY
-            elif entry_allowed and entry_direction == 'SELL':
+            elif entry_allowed and new_entry == 'SELL':
                 sell_status = Signal.SELL
 
         elif buy_count > 0 and sell_count == 0:
@@ -297,6 +326,8 @@ class Strategy:
             'leg_slopes': leg_slopes or {},
             'slope_direction': slope_direction or 'WAIT',
             'entry_direction': entry_direction or 'WAIT',
+            'new_entry': new_entry or 'WAIT',
+            'cand_leg_slopes': cand_leg_slopes or {},
             'open_score': round(open_score, 1),
             'book_score': round(book_score, 1),
             'fc_score': round(fc_score, 1),
