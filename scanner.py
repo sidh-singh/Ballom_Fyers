@@ -71,6 +71,18 @@ def _roundness(strike: float, step: float) -> float:
     return max(0.0, 1.0 - d / (step / 2.0))
 
 
+def _default_round_step(underlying: str) -> int:
+    """Round-strike grid to prefer when symbols.json gives no `round_strike_step`:
+    NIFTY/BANKNIFTY → 500 (famous 24000/24500/25000/25500/26000); GOLD/SILVER → 1000.
+    Falls back to SCAN_ROUND_STRIKE_STEP for anything else."""
+    s = (underlying or "").upper()
+    if "SILVER" in s or "GOLD" in s:
+        return 1000
+    if "NIFTY" in s:
+        return 500
+    return SCAN_ROUND_STRIKE_STEP
+
+
 def _score(o: dict, spot: float, otype: str, lot_size, max_per_lot: float,
            min_per_lot: float, round_step: float):
     ltp = float(o.get("ltp", 0) or 0)
@@ -106,7 +118,8 @@ def scan_best_pair(symbol_cfg: dict, api, meter=None, lot_df=None) -> dict | Non
     underlying = symbol_cfg.get("_resolved_underlying", symbol_cfg["underlying"])
     max_per_lot = symbol_cfg.get("max_premium_per_lot", SCAN_MAX_PREMIUM_PER_LOT)
     min_per_lot = symbol_cfg.get("min_premium_per_lot", SCAN_MIN_PREMIUM_PER_LOT)
-    round_step = symbol_cfg.get("round_strike_step", SCAN_ROUND_STRIKE_STEP)
+    _cfg_step = symbol_cfg.get("round_strike_step")   # symbols.json override wins (incl. 0 = off)
+    round_step = _cfg_step if _cfg_step is not None else _default_round_step(underlying)
     model = api.model
     try:
         q = api.safe_api_call(model.quotes, data={"symbols": underlying})
