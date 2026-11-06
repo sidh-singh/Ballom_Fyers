@@ -169,6 +169,20 @@ The knobs you can set before any command (all optional — sensible defaults oth
 | `ENGINE` | `application.py` | the engine entry file (future brokers may differ) |
 | `PYTHON` | auto | force a specific Python 3.11 path |
 
+### Adding a NEW broker later — the port rule
+
+When you add another broker (its own `linux_<broker>_<live|demo>` branch), give it the **next free dashboard port**. The current allocation is **8050–8055**, so the next new branch takes **8056**, then **8057**, and so on — **n + 1 each time; never reuse 8050–8055.**
+
+Register it in [`scripts/common.sh`](scripts/common.sh): add a line to the `case` and bump `_NEXT_FREE_PORT`:
+```bash
+    fyers_hedging_live) _default_port=8055 ;;
+    zerodha_demo)       _default_port=8056 ;;   # new broker -> next free port
+    zerodha_live)       _default_port=8057 ;;
+```
+then set `_NEXT_FREE_PORT=8058`. If you forget to register it, the branch still starts (it falls back to `_NEXT_FREE_PORT`) — but register it so two new brokers never share a port.
+
+> **If an assistant (e.g. Claude) is helping you add a broker:** apply this rule automatically — take the next free port above the current maximum, update the `case` in `scripts/common.sh`, bump `_NEXT_FREE_PORT`, and keep the list in sequence. The owner may not restate it each time.
+
 ---
 
 ## 8. Update the bot later
