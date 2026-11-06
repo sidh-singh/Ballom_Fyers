@@ -61,7 +61,7 @@ SYMBOLS_JSON = Path(__file__).resolve().parent / "symbols.json"
 #  SUPERVISOR / LOOP TIMING
 # ═══════════════════════════════════════════════════════════════════════════════
 
-SUPERVISOR_TICK      = 30                 # seconds between Loop-1 ticks
+SUPERVISOR_TICK      = 10                 # sec between Loop-1 ticks = account/P&L + app-status refresh cadence (was 30; dashboard polls every 5s). ~18 USERINFO/min in-hours << 200/min cap. Raise if several bots share one Fyers account.
 WORKER_IDLE_SLEEP    = 8                  # idle between worker ticks (was 15); lower = faster LTP-based profit-booking, entries are bar-based. 8 = Prime single-bot; keep >=15 if several bots share one Fyers account.
 DAILY_MAINTENANCE_AT = dt_time(0, 10)     # ~00:10 IST → re-auth + re-download CSV
 
