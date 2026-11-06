@@ -50,6 +50,7 @@ API_USAGE_FILE      = STATE_DIR / "api_usage.json"      # written by api_meter
 OPTION_PAIRS_JSON   = STATE_DIR / "option_pairs.json"
 POSITION_STATE_FILE = STATE_DIR / "position_state.json"
 SIGNAL_STATE_FILE   = STATE_DIR / "signal_state.json"   # per-symbol SHA/RSI/signal/pair
+OHLC_STATE_FILE     = STATE_DIR / "ohlc_state.json"     # active-leg OHLC candles (dashboard price chart)
 ACCOUNT_STATE_FILE  = STATE_DIR / "account_state.json"  # balance/equity/margin
 STRATEGY_LOG_DIR    = STATE_DIR / "strategy_log"
 

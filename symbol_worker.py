@@ -38,7 +38,7 @@ from indicator import Indicator
 from strategy import Strategy, Signal
 from fyers_api import FyersAPI
 import scanner
-from state_writer import log_strategy_event, write_signal_state
+from state_writer import log_strategy_event, write_signal_state, write_ohlc_state
 
 logger = logging.getLogger("worker")
 
@@ -121,11 +121,68 @@ class SymbolWorker(threading.Thread):
         )
         ad["close_threshold"] = close_threshold
         self._execute(buy_signal, sell_signal)
+        if self.active:
+            self._ohlc_leg = self.active["symbol"]
+            self._ohlc_side = self.active["side"]
+            self._ohlc_day = now_ist().date()
         try:
             write_signal_state(self.symbol,
                                self._signal_payload(ad, buy_pos, sell_pos, buy_signal, sell_signal))
         except Exception as e:
             logger.debug("[%s] signal_state write failed: %s", self.symbol, e)
+        try:
+            self._persist_ohlc(source_df)
+        except Exception as e:
+            logger.debug("[%s] ohlc_state write failed: %s", self.symbol, e)
+
+    # ── OHLC persistence for the dashboard price chart ──────────────────────
+    def _ohlc_leg_candles(self, leg_sym):
+        """Cached (~per bar) M5 candle fetch for the active leg. HAM has no _frame cache, so we
+        fetch the option's own candles here — only while a position is open, once per bar."""
+        cache = getattr(self, "_ohlc_cache", None)
+        if cache is None:
+            cache = self._ohlc_cache = {}
+        now = monotonic()
+        hit = cache.get(leg_sym)
+        if hit and (now - hit[0]) < 280:
+            return hit[1]
+        try:
+            df = self.ctx.api.fetch_historical_data(
+                leg_sym, SHA_TIMEFRAME, SHA_CANDLE_COUNT, market_type=self.asset_type,
+                holidays=self.ctx.holidays, special_sessions=self.ctx.special_sessions)
+        except Exception:
+            df = None
+        cache[leg_sym] = (now, df)
+        return df
+
+    def _persist_ohlc(self, index_df) -> None:
+        """Persist recent OHLC candles for the dashboard. While a position is open we use the
+        active CE/PE leg's OWN premium candles (so open/close/add fills line up on the price
+        axis); after a close we keep showing that leg for the rest of the session; else the index."""
+        leg = getattr(self, "_ohlc_leg", None)
+        day = getattr(self, "_ohlc_day", None)
+        if day is not None and day != now_ist().date():
+            leg = None
+        if self.active:
+            sym, side, active = self.active["symbol"], self.active["side"], True
+        elif leg:
+            sym, side, active = leg, getattr(self, "_ohlc_side", ""), False
+        else:
+            sym, side, active = self._active_underlying, "", False
+        df = index_df if sym == self._active_underlying else self._ohlc_leg_candles(sym)
+        if df is None or len(df) == 0:
+            sym, side, active, df = self._active_underlying, "", False, index_df
+        if df is None or len(df) == 0:
+            return
+        tail = df.tail(96)
+        t = [str(x)[:19] for x in tail["Timestamp"].tolist()]
+        write_ohlc_state(
+            self.symbol, sym, side, "M5", t,
+            [round(float(v), 2) for v in tail["Open"].tolist()],
+            [round(float(v), 2) for v in tail["High"].tolist()],
+            [round(float(v), 2) for v in tail["Low"].tolist()],
+            [round(float(v), 2) for v in tail["Close"].tolist()],
+            active)
 
     # ── leg state → strategy inputs (cost-basis P&L) ────────────────────────
     def _leg_state_and_threshold(self):
