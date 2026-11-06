@@ -126,6 +126,12 @@ Everything this bot writes is under **one folder**, separate from the code:
 
 Lock the token down once: `chmod 600 ~/ballom-trading/fyers_hedging_demo/fyers_token.json`.
 
+**Your config — `symbols.json` (in the repo folder, `~/ballom`):** this is the one file you edit to
+choose symbols, units and per-symbol settings. On first run it's created automatically from the
+shipped template `symbols.example.json`. It is **git-ignored**, so a `git pull` / update can **never
+overwrite your edits** — your settings are safe forever. (Updated defaults, if any, arrive in
+`symbols.example.json`; diff it against yours when you like.)
+
 ---
 
 ## 7. Run MORE THAN ONE bot (live + demo, or future brokers)
