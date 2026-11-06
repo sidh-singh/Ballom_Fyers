@@ -1,5 +1,9 @@
 # CHANGELOG — `fyers_live` / `fyers_demo`
 
+## 2026-11-06 — OHLC price chart: index + all today's trades, IST-aligned, current-day
+
+Final per-symbol price chart. Plots the UNDERLYING INDEX's today 5-min candles (IST-aligned — Fyers epochs are UTC, fills are IST) and overlays EVERY trade for the symbol (live position + all closed trades, across every option leg) at its exact time: ENTRY/ADD hollow circle (CE blue / PE orange), CLOSE filled circle (green profit / red loss), dotted entry->exit line, green/red Rs P/L label; the netting averaged position (yellow dotted) shows only for a multi-entry position. Premium + net Rs in the hover. symbol_worker persists the index (not the active leg) and, after a symbol's market closes, persists today's index candles once so its chart stays visible (fixes NIFTY blank in the evening while MCX still trades). Dashboard groups fills by asset.
+
 ## 2026-11-06 — Per-symbol OHLC price chart with your open/close fills marked
 
 New full-width candlestick chart per symbol, plotting the ACTIVE option-leg premium (the instrument you trade) so fills line up on the price axis. From profit_history.json: OPEN (green up-triangle), each OB/OS ADD (green dot), CLOSE (red down-triangle); a dotted connector per position to the close/now coloured by P/L (green profit / red loss); a recessive dashed line at the booked average price while open. **Netting branches** also draw the averaged position — blue diamond open, orange diamond close, yellow dotted line between (gated by SHOW_AVG_POSITION). Recessive teal/slate candles keep the bright fills the focus; hover shows each fill's time/price/net.
