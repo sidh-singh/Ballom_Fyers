@@ -25,9 +25,10 @@ import json
 import os
 import tempfile
 import threading
+from datetime import timedelta
 from pathlib import Path
 
-from constants import STATE_DIR, now_ist, today_ist
+from constants import STATE_DIR, now_ist, today_ist, HISTORY_RETENTION_DAYS
 
 
 class PositionTracker:
@@ -203,6 +204,9 @@ class PositionTracker:
             "qty": qty, "action": action,
             "ltp": round(ltp, 2), "avg_price": round(avg, 2),
         })
+        # retention: keep only ~1 week of trade history (matches the dashboard date picker)
+        cutoff = (today_ist() - timedelta(days=HISTORY_RETENTION_DAYS)).isoformat()
+        entries = [e for e in entries if str(e.get("date", "")) >= cutoff]
         if len(entries) > self.MAX_HISTORY_ENTRIES:
             entries = entries[-self.MAX_HISTORY_ENTRIES:]
         self._write_json_atomic(self._history_file, entries)
