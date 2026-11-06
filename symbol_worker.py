@@ -145,10 +145,6 @@ class SymbolWorker(threading.Thread):
         ad["exit_allowed"] = exit_allowed
         ad["min_hold_left"] = min_hold_left
         self._execute(buy_signal, sell_signal)
-        if self.active:
-            self._ohlc_leg = self.active["symbol"]
-            self._ohlc_side = self.active["side"]
-            self._ohlc_day = now_ist().date()
         try:
             write_signal_state(self.symbol,
                                self._signal_payload(ad, buy_pos, sell_pos, buy_signal, sell_signal))
@@ -161,23 +157,10 @@ class SymbolWorker(threading.Thread):
 
     # ── OHLC persistence for the dashboard price chart ──────────────────────
     def _persist_ohlc(self, index_df) -> None:
-        """Persist recent OHLC candles for the dashboard. While a position is open we use the
-        active CE/PE leg's OWN premium candles (so open/close/add fills line up on the price
-        axis); after a close we keep showing that leg for the rest of the session (so the closed
-        trade stays visible); otherwise the underlying index. Reuses the per-bar _frame cache."""
-        leg = getattr(self, "_ohlc_leg", None)
-        day = getattr(self, "_ohlc_day", None)
-        if day is not None and day != now_ist().date():
-            leg = None                                       # yesterday's leg → drop
-        if self.active:
-            sym, side, active = self.active["symbol"], self.active["side"], True
-        elif leg:
-            sym, side, active = leg, getattr(self, "_ohlc_side", ""), False
-        else:
-            sym, side, active = self._active_underlying, "", False
-        df = index_df if sym == self._active_underlying else self._frame(sym, "TIMEFRAME_M5")
-        if df is None or len(df) == 0:                       # leg fetch failed → fall back to index
-            sym, side, active, df = self._active_underlying, "", False, index_df
+        """Persist the UNDERLYING INDEX's today M5 candles (IST-aligned) for the dashboard. The chart
+        overlays ALL of today's trades for this symbol (every leg) on it — so the live position AND
+        every closed trade are visible on one common time axis."""
+        df = index_df
         if df is None or len(df) == 0:
             return
         tail = df.tail(220)
@@ -197,7 +180,7 @@ class SymbolWorker(threading.Thread):
         if idx:
             tstr = [tstr[i] for i in idx]; o = [o[i] for i in idx]
             h = [h[i] for i in idx]; l = [l[i] for i in idx]; c = [c[i] for i in idx]
-        write_ohlc_state(self.symbol, sym, side, "M5", tstr, o, h, l, c, active)
+        write_ohlc_state(self.symbol, self._active_underlying, "", "M5", tstr, o, h, l, c, bool(self.active))
 
     # ── leg state → strategy inputs (cost-basis P&L) ────────────────────────
     def _leg_state_and_threshold(self):
