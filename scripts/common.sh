@@ -41,6 +41,11 @@ export BALLOM_DIR="${BALLOM_DIR:-$INSTANCE_DIR}"     # constants.py reads this e
 VENV="${VENV:-$INSTANCE_DIR/venv}"
 
 # ---- dashboard port (preset per instance so several bots never clash; override with PORT=) ----
+# PORT REGISTRY - each instance has a fixed port so running bots never collide.
+# >>> ADDING A NEW BROKER: give its branch the NEXT free port. Add a line in the case below,
+#     in sequence (e.g.  zerodha_demo) _default_port=8056 ;;), then bump _NEXT_FREE_PORT by 1.
+#     Full steps: LINUX_SETUP.md -> "Adding a NEW broker". Never reuse 8050-8055.
+_NEXT_FREE_PORT=8056
 case "$INSTANCE" in
     fyers_demo)         _default_port=8050 ;;
     fyers_live)         _default_port=8051 ;;
@@ -48,7 +53,8 @@ case "$INSTANCE" in
     fyers_netting_live) _default_port=8053 ;;
     fyers_hedging_demo) _default_port=8054 ;;
     fyers_hedging_live) _default_port=8055 ;;
-    *)                  _default_port=8050 ;;
+    # add new brokers here, each with the next port, kept in sequence
+    *)                  _default_port="$_NEXT_FREE_PORT" ;;   # unregistered -> next free (register it)
 esac
 PORT="${PORT:-$_default_port}"
 
