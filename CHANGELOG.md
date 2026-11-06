@@ -1,5 +1,9 @@
 # CHANGELOG — `fyers_live` / `fyers_demo`
 
+## 2026-11-06 — Config decoupled: symbols.json git-ignored, shipped as symbols.example.json
+
+`symbols.json` (your symbols/units config) is no longer tracked — renamed to `symbols.example.json` (the shipped template) and git-ignored. `scripts/common.sh` creates `symbols.json` from the template on first run if it's missing, so a fresh clone still works out of the box. Result: `git pull` / the start.sh auto-update can **never overwrite your edited config** — the pull-conflict risk on `symbols.json` is gone. `setup.sh` output + LINUX_SETUP.md section 6 note where your config lives. 6 `linux_` branches (each keeps its own config as its example). _Why: `symbols.json` was tracked, so editing it on the server could block updates; this is the standard example-file pattern._
+
 ## 2026-11-06 — start.sh auto-pulls latest code (fast-forward, config-safe)
 
 `./start.sh` now runs `git pull --ff-only` (no credential prompt, never a merge mess) before starting, so the bot always launches the latest code. If a tracked file was edited locally (e.g. `symbols.json`) the pull skips with a warning and starts with current code — your config is never clobbered. If the pull changes `requirements_fyers.txt`, the venv libraries are refreshed automatically. Skip for one run with `NO_PULL=1 ./start.sh`. LINUX_SETUP.md section 8 updated (`./stop.sh && ./start.sh` to apply an update). 6 `linux_` branches. _Why: owner wanted `./start.sh` to always run the latest code without a separate git pull step._
