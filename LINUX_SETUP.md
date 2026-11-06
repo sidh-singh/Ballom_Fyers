@@ -165,12 +165,19 @@ The knobs you can set before any command (all optional — sensible defaults oth
 
 ## 8. Update the bot later
 
+`./start.sh` now **pulls the latest code automatically** every time (and refreshes the libraries if
+a change needs it). So to apply an update, just restart:
+
 ```bash
-cd ~/ballom
-git pull
-bash setup.sh                                   # re-installs any new libraries
-sudo systemctl restart ballom-fyers_netting_live        # pick up the new code
+./stop.sh && ./start.sh
 ```
+
+Notes:
+- The auto-pull is **fast-forward only** and never overwrites your edits. If you've changed a tracked
+  file on the server (e.g. `symbols.json`), the pull simply **skips with a warning** and starts with
+  your current code — your config is safe.
+- Skip the auto-pull for one run with `NO_PULL=1 ./start.sh`.
+- Fully manual alternative: `cd ~/ballom && git pull && bash setup.sh`.
 
 ## 9. If something goes wrong
 
