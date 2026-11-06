@@ -282,6 +282,9 @@ SLOPE_TIMEFRAMES = ['TIMEFRAME_' + _tf for _tf in dict.fromkeys(
 LEG_SLOPE_TIMEFRAMES = ['TIMEFRAME_' + _tf for _tf in dict.fromkeys(
     _k for _d in (BOOK_SCORE_WEIGHTS, FORCE_CLOSE_SCORE_WEIGHTS) for _k in _d
 )]
+# CANDIDATE-leg slope set, computed while FLAT to gate a fresh entry: the option leg's own H4 + M5
+# (both RSI+MACD must be +ve), plus M15 for the anti-vibration check (must not already be reversing).
+OPEN_LEG_TIMEFRAMES = ['TIMEFRAME_H4', 'TIMEFRAME_M5', 'TIMEFRAME_M15']
 
 # ── Pivot-slope params (RSI + MACD-histogram) ──
 PEAK_LOOKBACK = 20             # candles scanned for the latest pivot
