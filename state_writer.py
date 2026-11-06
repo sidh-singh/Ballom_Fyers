@@ -22,6 +22,7 @@ from typing import Any
 from constants import (
     STATE_DIR, APP_STATUS_FILE, STRATEGY_LOG_DIR, now_ist,
     SIGNAL_STATE_FILE, ACCOUNT_STATE_FILE, OHLC_STATE_FILE,
+    OHLC_HIST_DIR, HISTORY_RETENTION_DAYS,
 )
 
 _signal_lock = threading.Lock()   # serialise per-symbol signal_state read-merge-write
@@ -29,7 +30,7 @@ _ohlc_lock = threading.Lock()     # serialise per-symbol ohlc_state read-merge-w
 _OHLC_MAX_BARS = 220              # a full session of M5 candles (NSE ~75, MCX ~175) for the price chart
 
 _MAX_LOG_ENTRIES = 500
-_MAX_LOG_DAYS = 14
+_MAX_LOG_DAYS = HISTORY_RETENTION_DAYS   # keep 1 week of per-day logs + OHLC snapshots
 
 
 def _ts() -> str:
@@ -103,6 +104,10 @@ def write_ohlc_state(symbol: str, leg: str, side: str, tf: str,
             "l": list(l)[-n:], "c": list(c)[-n:], "timestamp": _ts(),
         }
         _write_json_atomic(OHLC_STATE_FILE, data)
+        # per-day snapshot so the dashboard date picker can show a past day's price chart
+        today = now_ist().strftime("%Y-%m-%d")
+        _write_json_atomic(OHLC_HIST_DIR / f"{today}.json", data)
+        _prune_dir(OHLC_HIST_DIR)
 
 
 # ── strategy log (date-partitioned) ─────────────────────────────────────────
@@ -125,13 +130,18 @@ def log_strategy_event(symbol: str, leg: str, action: str,
     _cleanup_old_logs()
 
 
-def _cleanup_old_logs() -> None:
+def _prune_dir(d: Path) -> None:
+    """Delete YYYY-MM-DD.json files in `d` older than the retention window (keeps ~1 week)."""
     cutoff = (now_ist() - timedelta(days=_MAX_LOG_DAYS)).strftime("%Y-%m-%d")
-    if not STRATEGY_LOG_DIR.exists():
+    if not d.exists():
         return
-    for f in STRATEGY_LOG_DIR.iterdir():
+    for f in d.iterdir():
         if f.suffix == ".json" and f.stem < cutoff:
             try:
                 f.unlink()
             except Exception:
                 pass
+
+
+def _cleanup_old_logs() -> None:
+    _prune_dir(STRATEGY_LOG_DIR)
