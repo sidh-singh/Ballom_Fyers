@@ -127,6 +127,40 @@ class FyersAPI:
     def tradebook(self) -> dict:
         return self.safe_api_call(self.model.tradebook)
 
+    # asset_type → (exchange, segment) codes in the Fyers market-status feed.
+    #   exchange: 10=NSE, 11=MCX, 12=BSE.  segment: 10=CM(equity), 11=equity derivatives(NFO),
+    #   12=currency, 20=commodity.  NIFTY options trade on NSE-NFO; GOLD/SILVER on MCX commodity.
+    _MARKET_SEGMENTS = {
+        "INDEX":     (10, 11),   # NSE equity derivatives (NIFTY / stock options)
+        "COMMODITY": (11, 20),   # MCX commodity derivatives
+    }
+
+    def get_market_status(self) -> dict | None:
+        """Live, broker-authoritative open/close per asset, straight from Fyers `market_status`.
+
+        Returns e.g. ``{"INDEX": True, "COMMODITY": False}`` — True only when that segment's
+        NORMAL continuous session is OPEN *right now* (pre-open / post-close / closed → False).
+        A segment is omitted if its row isn't found; the whole call returns ``None`` on any API
+        error so the caller falls back to the static schedule.
+
+        This is how the engine trades Diwali Muhurat, Union-Budget and ANY unusual session with
+        zero hardcoded dates or times: whenever the exchange is actually open, this flips True.
+        """
+        resp = self.safe_api_call(self.model.market_status)
+        if not isinstance(resp, dict) or resp.get("s") != "ok":
+            return None
+        rows = resp.get("marketStatus") or []
+        if not rows:
+            return None
+        out: dict[str, bool] = {}
+        for asset_type, (exch, seg) in self._MARKET_SEGMENTS.items():
+            for r in rows:
+                if (r.get("exchange") == exch and r.get("segment") == seg
+                        and str(r.get("market_type", "")).upper() == "NORMAL"):
+                    out[asset_type] = str(r.get("status", "")).upper() == "OPEN"
+                    break
+        return out or None
+
     def last_fill_price(self, symbol: str) -> float | None:
         """Most recent executed trade price for *symbol* from the tradebook
         (used to record an accurate cost basis). None if unavailable."""
@@ -685,9 +719,9 @@ class FyersAPI:
                 with open(cache_file, "r") as f:
                     cached = json.load(f)
                 if cached.get("year") == year:
-                    # special_sessions are code-derived (Muhurat table + Budget rule), NOT from the
-                    # NSE API — always refresh them so a stale cache never serves an outdated
-                    # Muhurat date/time (e.g. after the yearly _MUHURAT_SESSIONS update).
+                    # special_sessions are no longer cached/hardcoded — they're detected live at
+                    # run time (application._refresh_special_sessions off the broker market_status),
+                    # so always clear whatever a stale cache held.
                     cached["special_sessions"] = FyersAPI._known_special_sessions(year)
                     return cached
             except Exception:
@@ -774,50 +808,20 @@ class FyersAPI:
                 continue
         return valid
 
-    # ── Diwali Muhurat sessions — explicit per-year (date, open, close) from the NSE circular ──
-    #   ⚠️  UPDATE EVERY YEAR.  Muhurat's DATE *and* TIME are fixed by an NSE circular issued
-    #   ~2 weeks before Diwali, and both drift year to year (the slot even moved from evening
-    #   to afternoon in 2025).  So they cannot be computed — add the new row each year from the
-    #   circular.  A year with no row yields no Muhurat session (engine never trades a guess).
-    #   Next to add: Diwali 2027 ≈ 2027-10-29 (confirm exact date + time with the NSE circular).
-    _MUHURAT_SESSIONS = {
-        2024: ("2024-11-01", "18:00", "19:00"),   # Samvat 2081 — evening slot
-        2025: ("2025-10-21", "13:45", "14:45"),   # Samvat 2082 — moved to afternoon
-        2026: ("2026-11-08", "14:20", "15:30"),   # Samvat 2083 — continuous 2:20–3:30 pm
-    }
-
     @staticmethod
     def _known_special_sessions(year: int) -> list[dict]:
-        """Days the NSE is OPEN that a plain weekend/holiday check would otherwise skip.
+        """No special sessions are hardcoded any more — the engine DETECTS them live.
 
-        Covers (1) Diwali **Muhurat** trading and (2) a **Union Budget** session that lands
-        on a weekend.  Each entry is {date, name, open, close, asset_type}; the engine honours
-        `open`/`close` as that day's trade window (see symbol_worker._in_window and the
-        fetch_historical_data special-session map) and `asset_type` scopes it to one market.
-        Muhurat is table-driven (see ``_MUHURAT_SESSIONS`` — UPDATE YEARLY); the Budget rule is
-        computed (NSE ran full 09:15–15:30 sessions in 2015, 2020 and 2025).
+        Diwali Muhurat and weekend Union-Budget sessions have dates AND times that change every
+        year (NSE fixes them in a circular ~2 weeks ahead), so hardcoding them is a yearly
+        maintenance trap. Instead the supervisor polls the broker's live ``market_status`` each
+        tick: when the exchange is actually OPEN on a day the static calendar calls closed, it
+        auto-injects that day as a special session (see application._refresh_special_sessions) so
+        the data fetch + is_trading_day include it, and the worker trades it. Zero hardcoded dates.
+
+        Returns [] (kept as a hook so the holiday-cache structure and callers are unchanged).
         """
-        sessions: list[dict] = []
-
-        # Diwali Muhurat — per-year table (afternoon/evening slot varies; see _MUHURAT_SESSIONS).
-        if year in FyersAPI._MUHURAT_SESSIONS:
-            d, o, c = FyersAPI._MUHURAT_SESSIONS[year]
-            sessions.append({
-                "date": d, "name": "Diwali Muhurat Trading",
-                "open": o, "close": c, "asset_type": "INDEX",
-            })
-
-        # Union Budget on a weekend — budget day is Feb 1 (since 2017); when it falls on a
-        # Sat/Sun the NSE runs a normal cash + F&O session (2015, 2020, 2025 precedents).
-        feb1 = date(year, 2, 1)
-        if feb1.weekday() >= 5:  # Saturday or Sunday
-            sessions.append({
-                "date": feb1.isoformat(),
-                "name": "Union Budget (Special Weekend Session)",
-                "open": "09:15", "close": "15:30", "asset_type": "INDEX",
-            })
-
-        return sessions
+        return []
 
     @staticmethod
     def load_holiday_set(year: int | None = None) -> Tuple[set[str], list[dict]]:
