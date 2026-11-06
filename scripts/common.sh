@@ -79,3 +79,12 @@ resolve_python() {
     fi
     return 1
 }
+
+# ---- ensure your config exists (created once from the tracked template) ----
+# symbols.json is git-ignored, so `git pull` / updates never touch your edits. The first
+# time any script runs, we copy symbols.example.json -> symbols.json if it's missing.
+if [ ! -f "$REPO_DIR/symbols.json" ] && [ -f "$REPO_DIR/symbols.example.json" ]; then
+    if cp "$REPO_DIR/symbols.example.json" "$REPO_DIR/symbols.json" 2>/dev/null; then
+        warn "created symbols.json from the template — edit it to set your symbols & units."
+    fi
+fi

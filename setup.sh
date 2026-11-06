@@ -84,6 +84,7 @@ cat <<EOF
 
   WHERE THINGS LIVE
      data + token + logs : $BALLOM_DIR
+     your config         : symbols.json   (edit symbols / units here; safe from updates)
      dashboard web page   : http://127.0.0.1:$PORT   (after you start it)
 
   EASIEST — start / stop BOTH the engine AND the dashboard together:
