@@ -1,5 +1,11 @@
 # CHANGELOG — `fyers_live` / `fyers_demo`
 
+## 2026-11-06 — Per-symbol OHLC price chart with your open/close fills marked
+
+New full-width candlestick chart per symbol, plotting the ACTIVE option-leg premium (the instrument you trade) so fills line up on the price axis. From profit_history.json: OPEN (green up-triangle), each OB/OS ADD (green dot), CLOSE (red down-triangle); a dotted connector per position to the close/now coloured by P/L (green profit / red loss); a recessive dashed line at the booked average price while open. **Netting branches** also draw the averaged position — blue diamond open, orange diamond close, yellow dotted line between (gated by SHOW_AVG_POSITION). Recessive teal/slate candles keep the bright fills the focus; hover shows each fill's time/price/net.
+
+Engine: new OHLC_STATE_FILE + state_writer.write_ohlc_state persist the active leg's last ~96 M5 candles; symbol_worker._persist_ohlc uses the active leg while open, the last-traded leg through the session, else the index. RSI+MACD reuses the per-bar _frame cache (no extra API); HAM adds a small per-bar leg-candle cache. All 12 branches. _Why: owner asked to see the price action with their entries / exits / averages marked, full-width, per symbol._
+
 ## 2026-11-06 — Worker loop idle 15s -> 8s (faster LTP-based profit-booking)
 
 `WORKER_IDLE_SLEEP` reduced 15 -> 8 in `constants.py`. Entries are unaffected (RSI/MACD/SHA signals are computed on 5m/15m/H4 candles and only change on a new bar), so this only speeds up the **LTP-based profit-booking / force-close reaction** from ~15-25s to ~8-10s. Safe for a single bot on Prime (well under 500 DATA/min with per-bar caching); keep >=15 if several bots share one Fyers account (shared per-account rate limit). Not set to 0 — the `api_meter` would then throttle the loop anyway while spinning CPU on cached recompute, with no entry benefit and a -429 / daily-block risk. `SUPERVISOR_TICK` (30s account/maintenance poll) unchanged. All 12 branches. _Why: owner wanted less delay; this trims the only latency that matters (profit exits) without hammering the API._
