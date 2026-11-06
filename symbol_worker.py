@@ -180,15 +180,24 @@ class SymbolWorker(threading.Thread):
             sym, side, active, df = self._active_underlying, "", False, index_df
         if df is None or len(df) == 0:
             return
-        tail = df.tail(96)
-        t = [str(x)[:19] for x in tail["Timestamp"].tolist()]
-        write_ohlc_state(
-            self.symbol, sym, side, "M5", t,
-            [round(float(v), 2) for v in tail["Open"].tolist()],
-            [round(float(v), 2) for v in tail["High"].tolist()],
-            [round(float(v), 2) for v in tail["Low"].tolist()],
-            [round(float(v), 2) for v in tail["Close"].tolist()],
-            active)
+        tail = df.tail(220)
+        ts = tail["Timestamp"]
+        try:                               # Fyers candles are naive-UTC (epoch); fills are IST — align them
+            ts = ts.dt.tz_localize("UTC") if ts.dt.tz is None else ts
+            ts = ts.dt.tz_convert("Asia/Kolkata").dt.tz_localize(None)
+        except Exception:
+            pass
+        tstr = [str(x)[:19] for x in ts.tolist()]
+        o = [round(float(v), 2) for v in tail["Open"].tolist()]
+        h = [round(float(v), 2) for v in tail["High"].tolist()]
+        l = [round(float(v), 2) for v in tail["Low"].tolist()]
+        c = [round(float(v), 2) for v in tail["Close"].tolist()]
+        today = now_ist().strftime("%Y-%m-%d")               # current day only
+        idx = [i for i, s in enumerate(tstr) if s[:10] == today]
+        if idx:
+            tstr = [tstr[i] for i in idx]; o = [o[i] for i in idx]
+            h = [h[i] for i in idx]; l = [l[i] for i in idx]; c = [c[i] for i in idx]
+        write_ohlc_state(self.symbol, sym, side, "M5", tstr, o, h, l, c, active)
 
     # ── leg state → strategy inputs (cost-basis P&L) ────────────────────────
     def _leg_state_and_threshold(self):
