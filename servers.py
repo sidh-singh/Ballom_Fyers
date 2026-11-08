@@ -28,13 +28,21 @@ _LINE_RE = re.compile(r"\(?\s*(" + _IPV4 + r")\s*\)?\s*[-–:]\s*([^\r\n]+)")
 
 
 def _norm_os(value: str) -> str | None:
-    """'Windows'/'win'/... -> 'windows'; 'Linux'/'ubuntu'/... -> 'linux'; unknown -> None."""
+    """Normalise the OS: keep the specific distro so the dashboard can show its logo.
+    -> 'windows' / 'debian' / 'ubuntu' / 'mac' / 'linux' (generic); unknown -> None."""
     v = (value or "").strip().lower()
     if not v:
         return None
     if "win" in v:
         return "windows"
-    if any(k in v for k in ("linux", "ubuntu", "debian", "unix", "nix")):
+    if "debian" in v:
+        return "debian"
+    if "ubuntu" in v:
+        return "ubuntu"
+    if any(k in v for k in ("mac", "osx", "apple", "darwin")):
+        return "mac"
+    if any(k in v for k in ("linux", "unix", "nix", "centos", "fedora", "redhat",
+                            "rhel", "arch", "mint", "suse")):
         return "linux"
     return None
 

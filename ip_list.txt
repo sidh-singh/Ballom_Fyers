@@ -1,8 +1,9 @@
 # Ballom server list for the health-check dashboard.
 # Add a server by appending a Name / IP / OS block like the ones below. The dashboard
 # auto-detects any new entry on its next refresh — no code change needed.
-#   OS: Windows  -> RDP / port 3389 is probed
-#   OS: Linux    -> SSH / port 22 is probed
+#   OS: Windows            -> RDP / port 3389 is probed; shows the Windows logo
+#   OS: Debian/Ubuntu/Linux -> SSH / port 22 is probed; shows that distro's logo
+#   OS: Mac                -> SSH / port 22 is probed; shows the Apple logo
 # OS is optional: if you omit it, it's inferred from the name (MT* = Windows, else Linux).
 # The legacy "(IP) - NAME" one-line style is still accepted too.
 
@@ -48,4 +49,4 @@ OS: Windows
 
 Name: FYERS
 IP: 88.150.138.80
-OS: Linux
+OS: Debian

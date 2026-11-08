@@ -30,7 +30,9 @@ Name: FYERS
 IP: 88.150.138.80
 OS: Linux
 ```
-- **`OS:`** sets the type explicitly — **Windows** probes RDP (port 3389), **Linux** probes SSH (port 22).
+- **`OS:`** sets the type explicitly and picks the **brand logo** shown on the card:
+  `Windows`, `Debian`, `Ubuntu`, `Mac`, or `Linux` (generic). Windows probes RDP (3389);
+  everything else probes SSH (22). Add more distros by dropping an SVG in `assets/icons/`.
 - `OS:` is **optional**: if you omit it, it's inferred from the name (names starting with `MT` → Windows, anything else → Linux).
 - The old `(IP) - NAME` one-line style is still accepted (OS inferred from the name).
 

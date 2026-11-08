@@ -160,11 +160,22 @@ def _tile(label, value, color):
     ], extra={"flex": "1", "minWidth": "120px"})
 
 
+_OS_LABEL = {"windows": "Windows", "debian": "Debian", "ubuntu": "Ubuntu",
+             "mac": "macOS", "linux": "Linux"}
+
+
 def _os_badge(os_type):
-    win = os_type == "windows"
-    return html.Span("🪟 Windows" if win else "🐧 Linux",
-                     style={"color": C["blue"] if win else C["teal"], "fontSize": "11px",
-                            "fontWeight": "700"})
+    """Real OS brand logo (Windows / Debian / Ubuntu / macOS / Linux) on a small light chip
+    so every logo — colored or monochrome — stays visible on the dark theme."""
+    ot = os_type if os_type in _OS_LABEL else "linux"
+    chip = html.Span(
+        html.Img(src=f"/assets/icons/{ot}.svg",
+                 style={"height": "14px", "width": "14px", "display": "block"}),
+        style={"display": "inline-flex", "alignItems": "center", "justifyContent": "center",
+               "background": "#e6e9f2", "borderRadius": "4px", "padding": "2px", "marginRight": "5px"})
+    return html.Span([chip, html.Span(_OS_LABEL[ot], style={"color": C["dim"], "fontSize": "11px",
+                     "fontWeight": "700"})],
+                     style={"display": "inline-flex", "alignItems": "center"})
 
 
 def summary_tiles(servers, uptimes, view, historical, unattended=0):
