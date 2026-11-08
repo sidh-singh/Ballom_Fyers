@@ -7,6 +7,15 @@ Format: `YYYY-MM-DD` — change — _why_.
 
 ---
 
+## 2026-11-09 — Dashboard controls: per-symbol Force-close button + demo Add-balance
+
+Two dashboard actions that reach the engine through a new command channel — the dashboard (a separate read-only process) writes a JSON file to `state/commands/`, and the supervisor executes it each tick then deletes it (same spirit as the brake flag; `application._process_commands`). `constants.COMMANDS_DIR`.
+
+- **Force close (all 12):** each symbol panel (today view) gets a small "⏹ Force close" button → queues a `force_close` command → flags that symbol's worker (`force_close`) to flatten its open basket on the next tick via the normal `_close_leg` path (a real Fyers sell on **live**, simulated on **demo**; books P&L + updates the dashboard). Dash pattern-matching callback with a value guard so the 5-sec auto-refresh never fires a stray close. (To also *pause* re-entry, use the brake.)
+- **Add demo balance (6 demo branches only):** an amount input + "＋ Add demo balance" button → `add_balance` command → `DemoBroker.add_balance` tops up the simulated balance (locked + persisted). Hidden on live, which has no `add_balance` (the command is safely ignored there).
+
+_Why: owner wanted a one-click force-close per symbol, and a way to top up a low demo balance._
+
 ## 2026-11-07 — Backfill past-day OHLC candles on startup (date-picker charts work immediately)
 
 The date picker showed past-day trades/P&L but **no price candles** for days before the upgrade, because per-day OHLC snapshots were only written going forward. Each worker now backfills on startup: one `fetch_historical_data` call (~1500 M5 index candles) per symbol, IST-aligned, grouped by date, writing `state/ohlc_hist/<date>.json` for each past day in the retention window (`state_writer.backfill_ohlc_state`; never overwrites a live-written day; best-effort, guarded to run once). So after a restart the last week's price charts appear right away. `symbol_worker._backfill_ohlc` uses the `"5"` (M5) resolution — identical on both HAM and RSI+MACD workers. All 12 branches. _Why: owner saw past-day charts with no candles; snapshots needed seeding from history, not just going forward._
