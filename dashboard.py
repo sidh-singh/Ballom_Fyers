@@ -22,6 +22,8 @@ import json
 import re
 import sys
 import uuid
+import hashlib
+import os
 from collections import defaultdict
 
 import dash
@@ -43,6 +45,13 @@ from constants import (
 
 PROFIT_HISTORY = STATE_DIR / "profit_history.json"
 REFRESH_MS = 5000
+# Force-close password gate. The dashboard is network-reachable and Force-close hits REAL
+# positions, so the button requires this password. Stored as a SHA-256 hash (this repo is
+# public). Change it with env FORCE_CLOSE_PASSWORD (plaintext) or FORCE_CLOSE_PASSWORD_SHA256.
+_FC_HASH = (hashlib.sha256(os.environ["FORCE_CLOSE_PASSWORD"].encode()).hexdigest()
+            if os.environ.get("FORCE_CLOSE_PASSWORD")
+            else os.environ.get("FORCE_CLOSE_PASSWORD_SHA256",
+                                "af27854ff80810c324de83dedd45e1d432d21dfbfdf727c8ea53c694ef04958d"))
 IS_DEMO = True   # demo-branch header tag (set False on fyers_live)
 SHOW_AVG_POSITION = False  # hedging: no averaged-position overlay
 
@@ -909,6 +918,10 @@ app.layout = html.Div([
         ], style={"marginLeft": "auto", "display": "flex", "alignItems": "center", "minWidth": "260px"}),
     ], style={"display": "flex", "alignItems": "center", "marginBottom": "14px"}),
     html.Div([
+        dcc.Input(id="fc-pass", type="password", placeholder="force-close password",
+                  style={"width": "170px", "padding": "5px 8px", "borderRadius": "5px",
+                         "border": f"1px solid {C['border']}", "background": C["card"],
+                         "color": C["text"], "fontSize": "12px", "marginRight": "10px"}),
         html.Div(id="fc-feedback", style={"color": C["amber"], "fontSize": "12px", "fontWeight": "700"}),
         html.Div(style={"flex": "1"}),
         *([
@@ -995,9 +1008,10 @@ def _refresh(view_date, _):
 @app.callback(
     Output("fc-feedback", "children"),
     Input({"type": "force-close", "symbol": ALL}, "n_clicks"),
+    State("fc-pass", "value"),
     prevent_initial_call=True,
 )
-def _on_force_close(_clicks):
+def _on_force_close(_clicks, pw):
     """A per-symbol "Force close" button was clicked → queue a force_close command for the engine.
     The value guard ignores the 5-sec Interval re-render that resets n_clicks (1 -> 0)."""
     cctx = dash.callback_context
@@ -1013,6 +1027,8 @@ def _on_force_close(_clicks):
         return dash.no_update
     if not sym:
         return dash.no_update
+    if hashlib.sha256((pw or "").encode()).hexdigest() != _FC_HASH:
+        return f"⛔ wrong password — force-close for {sym} NOT sent"
     ok = _write_command("force_close", symbol=sym)
     ts = now_ist().strftime("%H:%M:%S")
     return (f"⏹ Force-close sent for {sym} at {ts} — closing on the next engine tick"
