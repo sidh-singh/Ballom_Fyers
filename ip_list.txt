@@ -1,11 +1,39 @@
-(37.220.31.63) - MT1
-(37.220.31.91) - MT2
-(37.220.31.43) - MT3
-(198.24.151.216) - MT4
-(37.220.31.55) - MT5
-(88.150.227.84) - MT6
-(109.200.24.80) - MT7
-(109.200.24.41) - MT8
-(88.150.138.110) - MT9
-(88.150.138.93) - MT10
-(88.150.138.80) - FYERS
+# Ballom server list for the health-check dashboard.
+# Add a server by appending a block like the ones below (Name + IP). The dashboard
+# auto-detects any new entry on its next refresh — no code change needed.
+#   - Names starting with "MT" are treated as WINDOWS servers (RDP / 3389 probed).
+#   - Any other name (e.g. FYERS) is treated as a LINUX server (SSH / 22 probed).
+# The legacy "(IP) - NAME" one-line style is still accepted too.
+
+Name: MT1
+IP: 37.220.31.63
+
+Name: MT2
+IP: 37.220.31.91
+
+Name: MT3
+IP: 37.220.31.43
+
+Name: MT4
+IP: 198.24.151.216
+
+Name: MT5
+IP: 37.220.31.55
+
+Name: MT6
+IP: 88.150.227.84
+
+Name: MT7
+IP: 109.200.24.80
+
+Name: MT8
+IP: 109.200.24.41
+
+Name: MT9
+IP: 88.150.138.110
+
+Name: MT10
+IP: 88.150.138.93
+
+Name: FYERS
+IP: 88.150.138.80

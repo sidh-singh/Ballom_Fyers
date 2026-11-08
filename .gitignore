@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+*.log
+deps_installed.flag
+dash_installed.flag
+instance.conf
+# runtime data lives OUTSIDE the repo (C:/Ballom_HealthCheck or ~/ballom-healthcheck)

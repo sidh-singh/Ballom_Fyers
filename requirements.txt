@@ -1,0 +1,4 @@
+# Ballom server health-check dashboard. Plain CPython 3.9+ (no 3.11 pin needed —
+# health checks use only the standard library; the dashboard uses dash + plotly).
+dash>=2.9
+plotly>=5.0
