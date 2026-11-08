@@ -113,6 +113,13 @@ class DemoBroker:
         with self._lock:
             return float(self._data["balance"])
 
+    def add_balance(self, amount: float) -> float:
+        """Top up the simulated balance (dashboard Add-balance button). Returns the new balance."""
+        with self._lock:
+            self._data["balance"] = round(float(self._data["balance"]) + float(amount), 2)
+            self._save()
+            return float(self._data["balance"])
+
     def trades(self, n: int = 200) -> list:
         with self._lock:
             return list(self._data["trades"][-n:])
@@ -187,6 +194,10 @@ class DemoFyersAPI(FyersAPI):
 
     def get_balance(self) -> float:
         return float(self._demo.balance())
+
+    def add_balance(self, amount: float) -> float:
+        """DEMO: top up the simulated balance (dashboard add_balance command)."""
+        return self._demo.add_balance(amount)
 
     def last_fill_price(self, symbol: str):
         return self._demo.last_fill(symbol)
