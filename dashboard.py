@@ -167,7 +167,7 @@ def _os_badge(os_type):
                             "fontWeight": "700"})
 
 
-def summary_tiles(servers, uptimes, view, historical):
+def summary_tiles(servers, uptimes, view, historical, unattended=0):
     total = len(servers)
     up = sum(1 for s in servers if s.get("status") == "UP")
     down = total - up
@@ -178,6 +178,7 @@ def summary_tiles(servers, uptimes, view, historical):
         _tile("Up now" if not historical else "Up (end of day)", str(up), C["green"]),
         _tile("Down", str(down), C["red"] if down else C["muted"]),
         _tile(f"Avg uptime ({view})", f"{avg_up}%", C["green"] if avg_up >= 99 else C["amber"]),
+        _tile("Unattended", str(unattended), C["amber"] if unattended else C["green"]),
     ], style={"display": "flex", "gap": "12px", "flexWrap": "wrap", "marginBottom": "14px"})
 
 
@@ -242,9 +243,9 @@ def server_cards(servers, uptimes, downcounts, historical, notif=None):
         # card colour: DOWN -> red; UP but with an unread notification -> yellow (needs attention);
         # UP & no unread -> green. Clearing the notification (and the server being up) turns it green.
         if not up:
-            accent, card_bg = C["red"], "#2a1414"
+            accent, card_bg = C["red"], "rgba(239,68,68,0.13)"       # red tint
         elif unread:
-            accent, card_bg = C["amber"], "#2a2410"
+            accent, card_bg = C["amber"], "rgba(245,158,11,0.15)"    # amber tint (needs attention)
         else:
             accent, card_bg = C["green"], C["card"]
         header = [html.Span(name, style={"color": C["text"], "fontSize": "17px", "fontWeight": "800"})]
@@ -404,10 +405,11 @@ def _refresh(view_date, _):
 
     # notification dots — unread recent status-changes (live view only, not when browsing history)
     notif = {} if historical else _unread_by_server(_read_acks())
+    unattended = sum(len(v) for v in notif.values())   # total unread notifications across servers
 
     tl_title = f"UPTIME TIMELINE — {view}  (green = up, red = down)"
     gen = f"monitor updated: {current.get('generated_at', '—')}" if not historical else f"day: {view}"
-    return (banner, summary_tiles(servers, uptimes, view, historical), donut(servers),
+    return (banner, summary_tiles(servers, uptimes, view, historical, unattended), donut(servers),
             tl_title, timeline(servers, baseline, events, day_start, day_end),
             server_cards(servers, uptimes, downcounts, historical, notif),
             events_table(events), gen)
