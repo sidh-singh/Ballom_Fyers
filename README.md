@@ -14,6 +14,9 @@ separate from the 12 fyers trading branches — its own port (**9000**) and its 
   away). Click the badge to read what happened — it's then marked read and the dot clears
   (persisted in `acks.json`, so it stays cleared across refreshes until the next change).
 - **Date dropdown** to browse the **last 1 week**; older data is auto-deleted.
+- **Scales to many servers (100+):** the uptime timeline, the server-card grid, and the
+  downtime log each scroll **inside their own panel** (adaptive — no scrollbar when there are
+  only a few), so the page stays a manageable height instead of growing endlessly.
 - **Auto-detects new servers:** add a server to `ip_list.txt` and it appears on the next
   refresh — no code change.
 

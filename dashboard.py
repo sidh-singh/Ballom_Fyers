@@ -304,7 +304,7 @@ def events_table(events):
                  style={"color": C["muted"], "padding": "12px"})
     return _card([html.Div("DOWNTIME / STATUS-CHANGE LOG", style={"color": C["dim"], "fontSize": "12px",
                  "letterSpacing": "0.6px", "marginBottom": "8px"}),
-                 html.Div(body, style={"overflowX": "auto"})])   # scroll instead of overflow on mobile
+                 html.Div(body, style={"overflowX": "auto", "maxHeight": "45vh", "overflowY": "auto"})])
 
 
 # ── app ───────────────────────────────────────────────────────────────────────
@@ -330,10 +330,11 @@ app.layout = html.Div([
         _card([html.Div("STATUS", style={"color": C["dim"], "fontSize": "12px", "marginBottom": "4px"}),
                html.Div(id="donut")], extra={"flex": "1 1 200px", "minWidth": "0"}),
         _card([html.Div(id="tl-title", style={"color": C["dim"], "fontSize": "12px", "marginBottom": "4px"}),
-               html.Div(id="timeline")], extra={"flex": "3 1 320px", "minWidth": "0"}),
-    ], style={"display": "flex", "gap": "12px", "marginBottom": "14px", "alignItems": "stretch",
+               html.Div(id="timeline", style={"maxHeight": "55vh", "overflowY": "auto"})],
+              extra={"flex": "3 1 320px", "minWidth": "0"}),
+    ], style={"display": "flex", "gap": "12px", "marginBottom": "14px", "alignItems": "flex-start",
               "flexWrap": "wrap"}),
-    html.Div(id="cards", style={"marginBottom": "14px"}),
+    html.Div(id="cards", style={"marginBottom": "14px", "maxHeight": "55vh", "overflowY": "auto"}),
     html.Div(id="events"),
 ], style={"maxWidth": "1280px", "margin": "0 auto", "padding": "16px",
           "fontFamily": "Inter, system-ui, sans-serif", "background": C["bg"], "minHeight": "100vh"})
