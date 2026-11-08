@@ -979,5 +979,5 @@ if IS_DEMO:
 
 if __name__ == "__main__":
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8050
-    print(f"dashboard → http://127.0.0.1:{port}")
-    app.run(debug=False, host="127.0.0.1", port=port)
+    print(f"dashboard → http://0.0.0.0:{port}   (reachable at http://<server-ip>:{port})")
+    app.run(debug=False, host="0.0.0.0", port=port)
