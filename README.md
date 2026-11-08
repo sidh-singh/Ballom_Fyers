@@ -5,7 +5,7 @@ A small standalone app (its own `health_check` branch) that watches every server
 separate from the 12 fyers trading branches — its own port (**9000**) and its own data dir.
 
 ## What it does
-- Polls every server every 30 s and shows **UP / DOWN**, latency, uptime %, and **when each
+- Polls every server **every 10 s** (all servers concurrently; tune `CHECK_INTERVAL_SEC`) and shows **UP / DOWN**, latency, uptime %, and **when each
   server last changed** — so a **shutdown is detected and recorded with a date-time**.
 - **Beautiful dark dashboard:** status donut + stat tiles, a per-server **uptime timeline**
   (green = up, red = down) for the chosen day, one card per server, and a **downtime log**.
@@ -17,13 +17,15 @@ separate from the 12 fyers trading branches — its own port (**9000**) and its 
 ```
 Name: MT1
 IP: 37.220.31.63
+OS: Windows
 
 Name: FYERS
 IP: 88.150.138.80
+OS: Linux
 ```
-- Names starting with **`MT`** → **Windows** servers (RDP / port 3389 probed).
-- Any other name (e.g. **`FYERS`**) → **Linux** server (SSH / port 22 probed).
-- The old `(IP) - NAME` one-line style is still accepted.
+- **`OS:`** sets the type explicitly — **Windows** probes RDP (port 3389), **Linux** probes SSH (port 22).
+- `OS:` is **optional**: if you omit it, it's inferred from the name (names starting with `MT` → Windows, anything else → Linux).
+- The old `(IP) - NAME` one-line style is still accepted (OS inferred from the name).
 
 ## How a server is checked (no credentials needed)
 Each server is **UP** if **either** an ICMP **ping** succeeds **or** its **service port**

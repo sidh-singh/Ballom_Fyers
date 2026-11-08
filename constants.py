@@ -16,13 +16,16 @@ APP_NAME = "Ballom Server Health"
 # Deliberately OUTSIDE the fyers dashboard range (8050–8056) so it never clashes
 # with any of the 12 trading dashboards. Override with the first CLI arg or PORT=.
 DASHBOARD_PORT = int(os.environ.get("PORT", "9000"))
-DASHBOARD_REFRESH_MS = 10_000          # browser auto-refresh cadence
+DASHBOARD_REFRESH_MS = 5_000           # browser auto-refresh cadence (shows a change within ~5s)
 
 # ── monitor ─────────────────────────────────────────────────────────────────
-CHECK_INTERVAL_SEC = 30                # how often the monitor polls every server
-PING_TIMEOUT_SEC = 2                   # per-server ICMP ping timeout
-TCP_TIMEOUT_SEC = 3                    # per-server service-port connect timeout
-RETENTION_DAYS = 7                     # keep exactly 1 week of history
+# Poll frequently so a shutdown is caught fast. All servers are probed CONCURRENTLY, and a
+# DOWN server resolves in ~max(ping,tcp) ≈ 2s, so a 10s interval never overlaps. Lower this
+# (e.g. 5) for even snappier detection; raise it if you ever monitor very many servers.
+CHECK_INTERVAL_SEC = int(os.environ.get("CHECK_INTERVAL_SEC", "10"))   # seconds between full sweeps
+PING_TIMEOUT_SEC = 1.5                  # per-server ICMP ping timeout (fast fail = fast DOWN detect)
+TCP_TIMEOUT_SEC = 2                     # per-server service-port connect timeout
+RETENTION_DAYS = 7                      # keep exactly 1 week of history
 
 # Service port probed per target OS — confirms the box is actually serving even if
 # ICMP ping is firewalled. Windows → RDP, Linux → SSH.

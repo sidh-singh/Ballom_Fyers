@@ -1,39 +1,51 @@
 # Ballom server list for the health-check dashboard.
-# Add a server by appending a block like the ones below (Name + IP). The dashboard
+# Add a server by appending a Name / IP / OS block like the ones below. The dashboard
 # auto-detects any new entry on its next refresh — no code change needed.
-#   - Names starting with "MT" are treated as WINDOWS servers (RDP / 3389 probed).
-#   - Any other name (e.g. FYERS) is treated as a LINUX server (SSH / 22 probed).
+#   OS: Windows  -> RDP / port 3389 is probed
+#   OS: Linux    -> SSH / port 22 is probed
+# OS is optional: if you omit it, it's inferred from the name (MT* = Windows, else Linux).
 # The legacy "(IP) - NAME" one-line style is still accepted too.
 
 Name: MT1
 IP: 37.220.31.63
+OS: Windows
 
 Name: MT2
 IP: 37.220.31.91
+OS: Windows
 
 Name: MT3
 IP: 37.220.31.43
+OS: Windows
 
 Name: MT4
 IP: 198.24.151.216
+OS: Windows
 
 Name: MT5
 IP: 37.220.31.55
+OS: Windows
 
 Name: MT6
 IP: 88.150.227.84
+OS: Windows
 
 Name: MT7
 IP: 109.200.24.80
+OS: Windows
 
 Name: MT8
 IP: 109.200.24.41
+OS: Windows
 
 Name: MT9
 IP: 88.150.138.110
+OS: Windows
 
 Name: MT10
 IP: 88.150.138.93
+OS: Windows
 
 Name: FYERS
 IP: 88.150.138.80
+OS: Linux
