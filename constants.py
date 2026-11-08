@@ -55,6 +55,7 @@ OHLC_HIST_DIR       = STATE_DIR / "ohlc_hist"           # per-day OHLC snapshots
 HISTORY_RETENTION_DAYS = 7                               # keep 1 week of trade history / per-day logs / OHLC snapshots
 ACCOUNT_STATE_FILE  = STATE_DIR / "account_state.json"  # balance/equity/margin
 STRATEGY_LOG_DIR    = STATE_DIR / "strategy_log"
+COMMANDS_DIR        = STATE_DIR / "commands"            # dashboard → engine command inbox (force-close, add-balance)
 
 SYMBOLS_JSON = Path(__file__).resolve().parent / "symbols.json"
 
