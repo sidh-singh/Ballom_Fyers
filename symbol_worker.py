@@ -74,6 +74,7 @@ class SymbolWorker(threading.Thread):
         self.units = 1
         self.active: dict | None = None     # {"side": "CE"|"PE", "symbol": leg_sym}
         self.pending_close = False
+        self.force_close = False            # set by the dashboard "force close" command (via supervisor)
         self._frame_cache: dict = {}        # (symbol, tf) -> (monotonic_fetch_time, ohlc_df) — per bar
         self._last_close_time = 0.0         # monotonic of last close → post-close re-entry cooldown
         self._entry_mono = None             # monotonic at first entry → post-entry min-hold (anti-vibration)
@@ -107,6 +108,12 @@ class SymbolWorker(threading.Thread):
         if not self._should_trade_now():
             self._persist_ohlc_offhours()     # keep this symbol's chart populated after its market closes
             return
+
+        if self.force_close:                  # dashboard "force close" — flatten this symbol's basket now
+            self.force_close = False
+            if self.active and not self.pending_close:
+                self._close_leg()             # real sell (live) / simulated (demo); books P&L on confirm
+            return                            # next tick's close-first path confirms until flat
 
         if self.active and self.pending_close:   # close-first priority (pt 6)
             self._confirm_close()
