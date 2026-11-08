@@ -21,11 +21,12 @@ from __future__ import annotations
 import json
 import re
 import sys
+import uuid
 from collections import defaultdict
 
 import dash
 from dash import dcc, html
-from dash.dependencies import Input, Output, State
+from dash.dependencies import Input, Output, State, ALL
 from datetime import timedelta
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -33,7 +34,7 @@ from plotly.subplots import make_subplots
 from constants import (
     STATE_DIR, API_USAGE_FILE, APP_STATUS_FILE, STRATEGY_LOG_DIR,
     SIGNAL_STATE_FILE, ACCOUNT_STATE_FILE, OHLC_STATE_FILE, OHLC_HIST_DIR,
-    HISTORY_RETENTION_DAYS, API_LIMITS, API_LIMITS_PRIME,
+    HISTORY_RETENTION_DAYS, COMMANDS_DIR, API_LIMITS, API_LIMITS_PRIME,
     RSI_OVERSOLD, RSI_OVERBOUGHT, now_ist,
     ENTRY_S, BOOK_S, FORCE_CLOSE_S,
     OPEN_SCORE_WEIGHTS, BOOK_SCORE_WEIGHTS, FORCE_CLOSE_SCORE_WEIGHTS,
@@ -73,6 +74,18 @@ def _recent_dates(n: int = HISTORY_RETENTION_DAYS):
         label = "Today" if i == 0 else ("Yesterday" if i == 1 else d.strftime("%a %d %b"))
         opts.append({"label": label, "value": d.isoformat()})
     return opts
+
+
+def _write_command(action: str, **extra) -> bool:
+    """Drop a command file for the engine to pick up (force_close / add_balance). Cross-process:
+    the dashboard writes, the supervisor executes + deletes it."""
+    try:
+        COMMANDS_DIR.mkdir(parents=True, exist_ok=True)
+        fn = COMMANDS_DIR / f"{now_ist().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}.json"
+        fn.write_text(json.dumps({"action": action, "ts": now_ist().isoformat(), **extra}))
+        return True
+    except Exception:
+        return False
 
 
 def _read(path, default=None):
@@ -555,6 +568,11 @@ def symbol_panel(symbol, s, closes, oh=None, events=None, show_avg=False,
             html.Span(_chip(variant, C["teal"]) if variant else "", style={"marginLeft": "8px"}),
             html.Span(f"units {s.get('units','-')}", style={"color": C["dim"], "fontSize": "12px",
                       "marginLeft": "auto"}),
+            html.Button("⏹ Force close", id={"type": "force-close", "symbol": symbol}, n_clicks=0,
+                        title=f"Close ALL open {symbol} positions now",
+                        style={"marginLeft": "10px", "background": C["red"], "color": "#fff",
+                               "border": "none", "borderRadius": "5px", "padding": "4px 10px",
+                               "fontSize": "11px", "fontWeight": "700", "cursor": "pointer"}),
         ], style={"display": "flex", "alignItems": "center", "marginBottom": "10px"})
         left = _card([
             head,
@@ -890,6 +908,22 @@ app.layout = html.Div([
                          clearable=False, style={"width": "190px", "fontSize": "13px"}),
         ], style={"marginLeft": "auto", "display": "flex", "alignItems": "center", "minWidth": "260px"}),
     ], style={"display": "flex", "alignItems": "center", "marginBottom": "14px"}),
+    html.Div([
+        html.Div(id="fc-feedback", style={"color": C["amber"], "fontSize": "12px", "fontWeight": "700"}),
+        html.Div(style={"flex": "1"}),
+        *([
+            dcc.Input(id="addbal-amt", type="number", min=0, step=1000, placeholder="amount ₹",
+                      style={"width": "120px", "padding": "5px 8px", "borderRadius": "5px",
+                             "border": f"1px solid {C['border']}", "background": C["card"],
+                             "color": C["text"], "fontSize": "13px"}),
+            html.Button("＋ Add demo balance", id="addbal-btn", n_clicks=0,
+                        style={"marginLeft": "8px", "background": C["teal"], "color": "#06281f",
+                               "border": "none", "borderRadius": "5px", "padding": "6px 12px",
+                               "fontSize": "12px", "fontWeight": "800", "cursor": "pointer"}),
+            html.Span(id="bal-feedback", style={"marginLeft": "10px", "color": C["teal"],
+                      "fontSize": "12px", "fontWeight": "700"}),
+        ] if IS_DEMO else []),
+    ], style={"display": "flex", "alignItems": "center", "marginBottom": "10px", "minHeight": "18px"}),
     html.Div(id="status"),
     html.Div(id="kpis", style={"marginTop": "14px"}),
     html.Div(id="api", style={"marginTop": "16px"}),
@@ -956,6 +990,49 @@ def _refresh(view_date, _):
                 "color": C["muted"], "padding": "28px", "textAlign": "center"})]
     return (status_strip(view, historical), kpi_row(view, historical), api_panel(),
             panels, log_table(view), api_limits_panel())
+
+
+@app.callback(
+    Output("fc-feedback", "children"),
+    Input({"type": "force-close", "symbol": ALL}, "n_clicks"),
+    prevent_initial_call=True,
+)
+def _on_force_close(_clicks):
+    """A per-symbol "Force close" button was clicked → queue a force_close command for the engine.
+    The value guard ignores the 5-sec Interval re-render that resets n_clicks (1 -> 0)."""
+    cctx = dash.callback_context
+    if not cctx.triggered:
+        return dash.no_update
+    t = cctx.triggered[0]
+    if not t.get("value"):                 # re-render reset, not a real click
+        return dash.no_update
+    prop = t.get("prop_id", "").rsplit(".", 1)[0]
+    try:
+        sym = json.loads(prop).get("symbol")
+    except Exception:
+        return dash.no_update
+    if not sym:
+        return dash.no_update
+    ok = _write_command("force_close", symbol=sym)
+    ts = now_ist().strftime("%H:%M:%S")
+    return (f"⏹ Force-close sent for {sym} at {ts} — closing on the next engine tick"
+            if ok else "force-close failed to queue")
+
+
+if IS_DEMO:
+    @app.callback(
+        Output("bal-feedback", "children"),
+        Input("addbal-btn", "n_clicks"),
+        State("addbal-amt", "value"),
+        prevent_initial_call=True,
+    )
+    def _on_add_balance(n, amt):
+        """DEMO only: queue an add_balance command to top up the simulated balance."""
+        if not n or not amt or float(amt) <= 0:
+            return dash.no_update
+        ok = _write_command("add_balance", amount=float(amt))
+        return (f"＋ Added ₹{float(amt):,.0f} at {now_ist().strftime('%H:%M:%S')}"
+                if ok else "add-balance failed to queue")
 
 
 if __name__ == "__main__":
