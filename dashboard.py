@@ -238,6 +238,15 @@ def server_cards(servers, uptimes, downcounts, historical, notif=None):
         # notification "dot": unread status-changes for this server (e.g. a quick down→up you
         # missed). Click it to read the message + clear it (persisted via acks.json).
         unread = notif.get(name, [])
+
+        # card colour: DOWN -> red; UP but with an unread notification -> yellow (needs attention);
+        # UP & no unread -> green. Clearing the notification (and the server being up) turns it green.
+        if not up:
+            accent, card_bg = C["red"], "#2a1414"
+        elif unread:
+            accent, card_bg = C["amber"], "#2a2410"
+        else:
+            accent, card_bg = C["green"], C["card"]
         header = [html.Span(name, style={"color": C["text"], "fontSize": "17px", "fontWeight": "800"})]
         if unread:
             msg = "  ·  ".join(f"{e.get('from','?')}→{e.get('to','?')} {e.get('at','')[11:16]}"
@@ -268,8 +277,8 @@ def server_cards(servers, uptimes, downcounts, historical, notif=None):
             html.Div((f"since {since}" if since and not historical else ""),
                      style={"color": C["muted"], "fontSize": "10px", "marginTop": "4px"}),
         ]
-        cards.append(_card(rows, extra={"flex": "1", "minWidth": "210px",
-                     "borderLeft": f"3px solid {col}"}))
+        cards.append(_card(rows, extra={"flex": "1", "minWidth": "210px", "background": card_bg,
+                     "borderLeft": f"4px solid {accent}"}))
     return html.Div(cards, style={"display": "flex", "gap": "12px", "flexWrap": "wrap"})
 
 
