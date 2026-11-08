@@ -23,7 +23,7 @@ from time import sleep, monotonic
 import constants
 from constants import (
     SYMBOLS_JSON, SUPERVISOR_TICK, DAILY_MAINTENANCE_AT, MARKET_HOURS,
-    MARKET_STATUS_STALE_S, now_ist, today_ist,
+    MARKET_STATUS_STALE_S, COMMANDS_DIR, now_ist, today_ist,
 )
 from fyers_auth import FyersAuth
 from fyers_api import FyersAPI
@@ -222,6 +222,47 @@ def _refresh_special_sessions(ctx: EngineContext) -> None:
         ctx.special_sessions = []
 
 
+def _process_commands(ctx: EngineContext, workers: dict, config: dict) -> None:
+    """Execute dashboard-issued commands. Each is a JSON file in COMMANDS_DIR, processed once then
+    deleted (cross-process channel: the dashboard writes, the engine executes — like the brake flag).
+      • force_close: flag the symbol's worker to flatten its open basket (live = real sell order,
+        demo = simulated) on its next tick.
+      • add_balance: top up the DEMO balance (ignored on live, which has no add_balance)."""
+    if not COMMANDS_DIR.exists():
+        return
+    for f in sorted(COMMANDS_DIR.glob("*.json")):
+        cmd = None
+        try:
+            cmd = json.loads(f.read_text())
+        except Exception:
+            pass
+        try:
+            action = (cmd or {}).get("action")
+            if action == "force_close":
+                sym = cmd.get("symbol")
+                w = workers.get(sym)
+                if w is not None:
+                    w.force_close = True
+                    logger.info("force-close requested for %s (dashboard)", sym)
+                    log_strategy_event(sym, "DASH", "FORCE_CLOSE_REQUESTED")
+                else:
+                    logger.warning("force-close: unknown/!running symbol %s", sym)
+            elif action == "add_balance":
+                amt = float(cmd.get("amount") or 0)
+                if amt > 0 and hasattr(ctx.api, "add_balance"):
+                    new_bal = ctx.api.add_balance(amt)
+                    logger.info("demo balance +Rs%.2f (dashboard) -> Rs%s", amt, new_bal)
+                    log_strategy_event("SYSTEM", "DASH", "ADD_BALANCE",
+                                       details=f"+Rs{amt:.2f} -> Rs{new_bal}")
+        except Exception as e:
+            logger.exception("command %s failed: %s", f.name, e)
+        finally:
+            try:
+                f.unlink()
+            except Exception:
+                pass
+
+
 def _write_account(ctx: EngineContext, markets_open: bool = True) -> None:
     """Snapshot balance/equity/margin/unrealized (+ API plan & renewal) for the dashboard.
     When all markets are CLOSED we SKIP the balance/positions read-API calls (nothing moves while
@@ -377,6 +418,11 @@ def main() -> None:
 
             # supervise workers
             supervise_workers(workers, config, ctx)
+            # dashboard commands (force-close / add demo balance)
+            try:
+                _process_commands(ctx, workers, config)
+            except Exception:
+                pass
             try:
                 # Off-hours we skip the balance/positions read-API poll (nothing changes when the
                 # market is shut) — only auth keep-alive + daily reauth run outside market hours.
