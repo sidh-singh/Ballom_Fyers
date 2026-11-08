@@ -7,8 +7,10 @@ separate from the 12 fyers trading branches — its own port (**9000**) and its 
 ## What it does
 - Polls every server **every 10 s** (all servers concurrently; tune `CHECK_INTERVAL_SEC`) and shows **UP / DOWN**, latency, uptime %, and **when each
   server last changed** — so a **shutdown is detected and recorded with a date-time**.
-- **Beautiful dark dashboard:** status donut + stat tiles, a per-server **uptime timeline**
+- **Beautiful dashboard:** status donut + stat tiles, a per-server **uptime timeline**
   (green = up, red = down) for the chosen day, one card per server, and a **downtime log**.
+- **Auto light / dark theme by IST time** — light during the day (06:00–18:00), dark at night.
+  (Tune the window via `DAY_START_HOUR` / `DAY_END_HOUR` in dashboard.py.)
 - **Notification dots:** each server card shows a 🔔 badge when it had a recent status change
   you haven't seen yet (e.g. a server that **shut down and restarted quickly** while you were
   away). Click the badge to read what happened — it's then marked read and the dot clears

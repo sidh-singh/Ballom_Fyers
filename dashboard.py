@@ -31,12 +31,34 @@ from constants import (
 )
 from servers import load_servers
 
-C = {
+THEME_DARK = {
     "bg": "#0a0e17", "card": "#141a28", "card2": "#1a2133", "border": "#232c42",
     "text": "#e6e9f2", "dim": "#93a0bd", "muted": "#5b6680",
     "green": "#22c55e", "red": "#ef4444", "amber": "#f59e0b", "grey": "#6b7280",
     "blue": "#60a5fa", "teal": "#2dd4bf", "grid": "rgba(140,150,180,0.08)",
 }
+THEME_LIGHT = {
+    "bg": "#f4f6fb", "card": "#ffffff", "card2": "#eef1f7", "border": "#dbe1ec",
+    "text": "#161c2d", "dim": "#566072", "muted": "#8a93a8",
+    "green": "#16a34a", "red": "#dc2626", "amber": "#d97706", "grey": "#6b7280",
+    "blue": "#2563eb", "teal": "#0d9488", "grid": "rgba(80,90,120,0.14)",
+}
+
+# Active palette — switched by IST time each refresh: light 06:00–18:00, dark otherwise.
+# (Override the window with the DAY_START_HOUR / DAY_END_HOUR module vars if you like.)
+DAY_START_HOUR, DAY_END_HOUR = 6, 18
+C = dict(THEME_DARK)
+
+
+def _theme_name() -> str:
+    return "light" if DAY_START_HOUR <= _now().hour < DAY_END_HOUR else "dark"
+
+
+def _apply_theme() -> None:
+    """Point the active palette C at the time-appropriate theme (mutated in place so every
+    builder that reads C picks it up)."""
+    C.clear()
+    C.update(THEME_LIGHT if _theme_name() == "light" else THEME_DARK)
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -325,10 +347,10 @@ app = dash.Dash(__name__, title="Ballom Health",
 app.layout = html.Div([
     dcc.Interval(id="tick", interval=DASHBOARD_REFRESH_MS, n_intervals=0),
     html.Div([
-        html.H2(APP_NAME, style={"color": C["text"], "margin": "0"}),
-        html.Span(id="gen", style={"color": C["muted"], "fontSize": "12px", "marginLeft": "12px"}),
+        html.Div(id="titlebar", style={"display": "flex", "alignItems": "baseline",
+                 "gap": "12px", "flexWrap": "wrap"}),   # title + "updated" — themed by _refresh
         html.Div([
-            html.Span("View date", style={"color": C["muted"], "fontSize": "11px", "marginRight": "8px"}),
+            html.Span("View date", style={"color": "#8a93a8", "fontSize": "11px", "marginRight": "8px"}),
             dcc.Dropdown(id="viewdate", options=_recent_dates(), value=_today_iso(),
                          clearable=False, style={"width": "190px", "fontSize": "13px"}),
         ], style={"marginLeft": "auto", "display": "flex", "alignItems": "center", "gap": "4px"}),
@@ -337,17 +359,10 @@ app.layout = html.Div([
     html.Div(id="banner"),
     html.Div(id="notif-msg"),
     html.Div(id="tiles"),
-    html.Div([
-        _card([html.Div("STATUS", style={"color": C["dim"], "fontSize": "12px", "marginBottom": "4px"}),
-               html.Div(id="donut")], extra={"flex": "1 1 200px", "minWidth": "0"}),
-        _card([html.Div(id="tl-title", style={"color": C["dim"], "fontSize": "12px", "marginBottom": "4px"}),
-               html.Div(id="timeline", style={"maxHeight": "55vh", "overflowY": "auto"})],
-              extra={"flex": "3 1 320px", "minWidth": "0"}),
-    ], style={"display": "flex", "gap": "12px", "marginBottom": "14px", "alignItems": "flex-start",
-              "flexWrap": "wrap"}),
+    html.Div(id="charts", style={"marginBottom": "14px"}),            # donut + timeline — themed by _refresh
     html.Div(id="cards", style={"marginBottom": "14px", "maxHeight": "55vh", "overflowY": "auto"}),
     html.Div(id="events"),
-], style={"maxWidth": "1280px", "margin": "0 auto", "padding": "16px",
+], id="page", style={"maxWidth": "1280px", "margin": "0 auto", "padding": "16px",
           "fontFamily": "Inter, system-ui, sans-serif", "background": C["bg"], "minHeight": "100vh"})
 
 
@@ -362,12 +377,13 @@ def _sync_dates(_, cur):
 
 
 @app.callback(
-    Output("banner", "children"), Output("tiles", "children"), Output("donut", "children"),
-    Output("tl-title", "children"), Output("timeline", "children"),
-    Output("cards", "children"), Output("events", "children"), Output("gen", "children"),
+    Output("page", "style"), Output("titlebar", "children"),
+    Output("banner", "children"), Output("tiles", "children"),
+    Output("charts", "children"), Output("cards", "children"), Output("events", "children"),
     Input("viewdate", "value"), Input("tick", "n_intervals"),
 )
 def _refresh(view_date, _):
+    _apply_theme()                 # light/dark by IST time of day
     today = _today_iso()
     view = view_date or today
     historical = view != today
@@ -421,10 +437,27 @@ def _refresh(view_date, _):
 
     tl_title = f"UPTIME TIMELINE — {view}  (green = up, red = down)"
     gen = f"monitor updated: {current.get('generated_at', '—')}" if not historical else f"day: {view}"
-    return (banner, summary_tiles(servers, uptimes, view, historical, unattended), donut(servers),
-            tl_title, timeline(servers, baseline, events, day_start, day_end),
-            server_cards(servers, uptimes, downcounts, historical, notif),
-            events_table(events), gen)
+
+    page_style = {"maxWidth": "1280px", "margin": "0 auto", "padding": "16px",
+                  "fontFamily": "Inter, system-ui, sans-serif",
+                  "background": C["bg"], "color": C["text"], "minHeight": "100vh"}
+    titlebar = [
+        html.H2(APP_NAME, style={"color": C["text"], "margin": "0"}),
+        html.Span(gen, style={"color": C["muted"], "fontSize": "12px"}),
+    ]
+    charts = html.Div([
+        _card([html.Div("STATUS", style={"color": C["dim"], "fontSize": "12px", "marginBottom": "4px"}),
+               donut(servers)], extra={"flex": "1 1 200px", "minWidth": "0"}),
+        _card([html.Div(tl_title, style={"color": C["dim"], "fontSize": "12px", "marginBottom": "4px"}),
+               html.Div(timeline(servers, baseline, events, day_start, day_end),
+                        style={"maxHeight": "55vh", "overflowY": "auto"})],
+              extra={"flex": "3 1 320px", "minWidth": "0"}),
+    ], style={"display": "flex", "gap": "12px", "alignItems": "flex-start", "flexWrap": "wrap"})
+
+    return (page_style, titlebar, banner,
+            summary_tiles(servers, uptimes, view, historical, unattended),
+            charts, server_cards(servers, uptimes, downcounts, historical, notif),
+            events_table(events))
 
 
 @app.callback(
