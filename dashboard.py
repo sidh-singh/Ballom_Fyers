@@ -190,9 +190,10 @@ def donut(servers):
         textinfo="none", hovertemplate="%{label}: %{value}<extra></extra>"))
     fig.add_annotation(text=f"<b>{up}/{len(servers)}</b><br>UP", showarrow=False,
                        font=dict(size=18, color=C["text"]))
-    fig.update_layout(height=190, margin=dict(l=6, r=6, t=6, b=6), showlegend=False,
+    fig.update_layout(height=190, autosize=True, margin=dict(l=6, r=6, t=6, b=6), showlegend=False,
                       paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
-    return dcc.Graph(figure=fig, config={"displayModeBar": False})
+    return dcc.Graph(figure=fig, config={"displayModeBar": False, "responsive": True},
+                     style={"width": "100%"})
 
 
 def timeline(servers, baseline, events, day_start, day_end):
@@ -211,7 +212,7 @@ def timeline(servers, baseline, events, day_start, day_end):
     total = max(1.0, (day_end - day_start).total_seconds())
     ticks = list(range(0, int(total) + 1, 3 * 3600))
     fig.update_layout(
-        barmode="overlay", height=max(180, 34 * len(names) + 60),
+        barmode="overlay", height=max(180, 34 * len(names) + 60), autosize=True,
         margin=dict(l=70, r=16, t=10, b=26), paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)", bargap=0.35,
         xaxis=dict(range=[0, total], tickvals=ticks,
@@ -219,7 +220,8 @@ def timeline(servers, baseline, events, day_start, day_end):
                    gridcolor=C["grid"], color=C["dim"], zeroline=False),
         yaxis=dict(color=C["text"], autorange="reversed"),
         font=dict(color=C["text"]))
-    return dcc.Graph(figure=fig, config={"displayModeBar": False}, style={"width": "100%"})
+    return dcc.Graph(figure=fig, config={"displayModeBar": False, "responsive": True},
+                     style={"width": "100%"})
 
 
 def server_cards(servers, uptimes, downcounts, historical, notif=None):
@@ -291,11 +293,14 @@ def events_table(events):
         html.Div("No status changes recorded — all servers stable. 🟢",
                  style={"color": C["muted"], "padding": "12px"})
     return _card([html.Div("DOWNTIME / STATUS-CHANGE LOG", style={"color": C["dim"], "fontSize": "12px",
-                 "letterSpacing": "0.6px", "marginBottom": "8px"}), body])
+                 "letterSpacing": "0.6px", "marginBottom": "8px"}),
+                 html.Div(body, style={"overflowX": "auto"})])   # scroll instead of overflow on mobile
 
 
 # ── app ───────────────────────────────────────────────────────────────────────
-app = dash.Dash(__name__, title="Ballom Health")
+app = dash.Dash(__name__, title="Ballom Health",
+                meta_tags=[{"name": "viewport",
+                            "content": "width=device-width, initial-scale=1"}])
 app.layout = html.Div([
     dcc.Interval(id="tick", interval=DASHBOARD_REFRESH_MS, n_intervals=0),
     html.Div([
@@ -305,20 +310,22 @@ app.layout = html.Div([
             html.Span("View date", style={"color": C["muted"], "fontSize": "11px", "marginRight": "8px"}),
             dcc.Dropdown(id="viewdate", options=_recent_dates(), value=_today_iso(),
                          clearable=False, style={"width": "190px", "fontSize": "13px"}),
-        ], style={"marginLeft": "auto", "display": "flex", "alignItems": "center", "minWidth": "260px"}),
-    ], style={"display": "flex", "alignItems": "center", "marginBottom": "16px"}),
+        ], style={"marginLeft": "auto", "display": "flex", "alignItems": "center", "gap": "4px"}),
+    ], style={"display": "flex", "alignItems": "center", "flexWrap": "wrap", "gap": "8px 12px",
+              "marginBottom": "16px"}),
     html.Div(id="banner"),
     html.Div(id="notif-msg"),
     html.Div(id="tiles"),
     html.Div([
         _card([html.Div("STATUS", style={"color": C["dim"], "fontSize": "12px", "marginBottom": "4px"}),
-               html.Div(id="donut")], extra={"flex": "0 0 230px"}),
+               html.Div(id="donut")], extra={"flex": "1 1 200px", "minWidth": "0"}),
         _card([html.Div(id="tl-title", style={"color": C["dim"], "fontSize": "12px", "marginBottom": "4px"}),
-               html.Div(id="timeline")], extra={"flex": "1"}),
-    ], style={"display": "flex", "gap": "12px", "marginBottom": "14px", "alignItems": "stretch"}),
+               html.Div(id="timeline")], extra={"flex": "3 1 320px", "minWidth": "0"}),
+    ], style={"display": "flex", "gap": "12px", "marginBottom": "14px", "alignItems": "stretch",
+              "flexWrap": "wrap"}),
     html.Div(id="cards", style={"marginBottom": "14px"}),
     html.Div(id="events"),
-], style={"maxWidth": "1280px", "margin": "0 auto", "padding": "26px",
+], style={"maxWidth": "1280px", "margin": "0 auto", "padding": "16px",
           "fontFamily": "Inter, system-ui, sans-serif", "background": C["bg"], "minHeight": "100vh"})
 
 
