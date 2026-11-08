@@ -16,7 +16,7 @@ from datetime import datetime, timedelta
 
 import dash
 from dash import dcc, html
-from dash.dependencies import Input, Output
+from dash.dependencies import Input, Output, State, ALL
 import plotly.graph_objects as go
 
 try:
@@ -27,7 +27,7 @@ except Exception:                      # pragma: no cover
 
 from constants import (
     APP_NAME, DASHBOARD_PORT, DASHBOARD_REFRESH_MS, RETENTION_DAYS,
-    HEALTH_DIR, CURRENT_FILE,
+    HEALTH_DIR, CURRENT_FILE, ACKS_FILE,
 )
 from servers import load_servers
 
@@ -75,6 +75,42 @@ def _recent_dates(n=RETENTION_DAYS):
 
 def _day_data(date_iso):
     return _read(HEALTH_DIR / f"day_{date_iso}.json", {}) or {}
+
+
+# ── notifications (per-server unread status-changes) ───────────────────────────
+def _read_acks():
+    return _read(ACKS_FILE, {}) or {}
+
+
+def _write_ack(name, when):
+    acks = _read_acks()
+    acks[name] = when
+    try:
+        ACKS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        ACKS_FILE.write_text(json.dumps(acks), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _recent_events(days=2):
+    """Status-change events from the last `days` day-files (covers an overnight blip)."""
+    out = []
+    base = _now().date()
+    for i in range(days):
+        out.extend(_day_data((base - timedelta(days=i)).isoformat()).get("events", []) or [])
+    return out
+
+
+def _unread_by_server(acks):
+    """{name: [events]} — status changes not yet read (at > that server's ack watermark)."""
+    unread = {}
+    for e in _recent_events():
+        name, at = e.get("name"), e.get("at", "")
+        if name and at and at > acks.get(name, ""):   # default "" => recent events start unread
+            unread.setdefault(name, []).append(e)
+    for evs in unread.values():
+        evs.sort(key=lambda x: x.get("at", ""))
+    return unread
 
 
 def _segments(name, baseline, events, day_start, day_end):
@@ -186,7 +222,8 @@ def timeline(servers, baseline, events, day_start, day_end):
     return dcc.Graph(figure=fig, config={"displayModeBar": False}, style={"width": "100%"})
 
 
-def server_cards(servers, uptimes, downcounts, historical):
+def server_cards(servers, uptimes, downcounts, historical, notif=None):
+    notif = notif or {}
     cards = []
     for s in servers:
         up = s.get("status") == "UP"
@@ -195,14 +232,26 @@ def server_cards(servers, uptimes, downcounts, historical):
         up_pct = uptimes.get(name, 100.0)
         lat = s.get("latency_ms")
         since = s.get("since", "")
+
+        # notification "dot": unread status-changes for this server (e.g. a quick down→up you
+        # missed). Click it to read the message + clear it (persisted via acks.json).
+        unread = notif.get(name, [])
+        header = [html.Span(name, style={"color": C["text"], "fontSize": "17px", "fontWeight": "800"})]
+        if unread:
+            msg = "  ·  ".join(f"{e.get('from','?')}→{e.get('to','?')} {e.get('at','')[11:16]}"
+                               for e in unread[-5:])
+            header.append(html.Span(
+                f"🔔 {len(unread)}", id={"type": "notif", "server": name}, n_clicks=0,
+                title=f"{name}: {msg}   (click to read & clear)",
+                style={"marginLeft": "8px", "background": C["amber"], "color": "#2a1e00",
+                       "borderRadius": "10px", "padding": "1px 8px", "fontSize": "11px",
+                       "fontWeight": "800", "cursor": "pointer"}))
+        header.append(html.Span(("● UP" if up else "● DOWN"),
+                      style={"marginLeft": "auto", "color": "#06281f" if up else "#2a0d0d",
+                             "background": col, "borderRadius": "6px", "padding": "2px 9px",
+                             "fontSize": "12px", "fontWeight": "800"}))
         rows = [
-            html.Div([
-                html.Span(name, style={"color": C["text"], "fontSize": "17px", "fontWeight": "800"}),
-                html.Span(("● UP" if up else "● DOWN"),
-                          style={"marginLeft": "auto", "color": "#06281f" if up else "#2a0d0d",
-                                 "background": col, "borderRadius": "6px", "padding": "2px 9px",
-                                 "fontSize": "12px", "fontWeight": "800"}),
-            ], style={"display": "flex", "alignItems": "center"}),
+            html.Div(header, style={"display": "flex", "alignItems": "center"}),
             html.Div([html.Span(s.get("ip", ""), style={"color": C["dim"], "fontSize": "12px"}),
                       html.Span("  ·  ", style={"color": C["muted"]}), _os_badge(s.get("os_type", "linux"))],
                      style={"marginTop": "6px"}),
@@ -259,6 +308,7 @@ app.layout = html.Div([
         ], style={"marginLeft": "auto", "display": "flex", "alignItems": "center", "minWidth": "260px"}),
     ], style={"display": "flex", "alignItems": "center", "marginBottom": "16px"}),
     html.Div(id="banner"),
+    html.Div(id="notif-msg"),
     html.Div(id="tiles"),
     html.Div([
         _card([html.Div("STATUS", style={"color": C["dim"], "fontSize": "12px", "marginBottom": "4px"}),
@@ -336,12 +386,53 @@ def _refresh(view_date, _):
                                   style={"color": C["dim"], "fontSize": "12px", "marginLeft": "10px"})],
                        pad="10px 16px", extra={"marginBottom": "12px"})
 
+    # notification dots — unread recent status-changes (live view only, not when browsing history)
+    notif = {} if historical else _unread_by_server(_read_acks())
+
     tl_title = f"UPTIME TIMELINE — {view}  (green = up, red = down)"
     gen = f"monitor updated: {current.get('generated_at', '—')}" if not historical else f"day: {view}"
     return (banner, summary_tiles(servers, uptimes, view, historical), donut(servers),
             tl_title, timeline(servers, baseline, events, day_start, day_end),
-            server_cards(servers, uptimes, downcounts, historical),
+            server_cards(servers, uptimes, downcounts, historical, notif),
             events_table(events), gen)
+
+
+@app.callback(
+    Output("notif-msg", "children"),
+    Input({"type": "notif", "server": ALL}, "n_clicks"),
+    prevent_initial_call=True,
+)
+def _on_notif(_clicks):
+    """A server's 🔔 dot was clicked → show its recent status-changes and mark them read
+    (persisted to acks.json, so the dot clears on the next refresh). The value guard ignores
+    the auto-refresh re-render that resets n_clicks."""
+    cctx = dash.callback_context
+    if not cctx.triggered:
+        return dash.no_update
+    t = cctx.triggered[0]
+    if not t.get("value"):
+        return dash.no_update
+    prop = t.get("prop_id", "").rsplit(".", 1)[0]
+    try:
+        name = json.loads(prop).get("server")
+    except Exception:
+        return dash.no_update
+    if not name:
+        return dash.no_update
+    evs = _unread_by_server(_read_acks()).get(name, [])
+    # mark read up to the latest unread event (or now) so every current unread clears, even if
+    # an event timestamp is slightly ahead of this clock.
+    watermark = max([e.get("at", "") for e in evs] + [_now().strftime("%Y-%m-%d %H:%M:%S")])
+    _write_ack(name, watermark)
+    if not evs:
+        return ""
+    detail = "  ·  ".join(f"{e.get('from','?')}→{e.get('to','?')} at {e.get('at','')[11:19]}" for e in evs)
+    return _card([
+        html.Span(f"🔔 {name}", style={"color": C["amber"], "fontWeight": "800"}),
+        html.Span(f"  {len(evs)} recent change(s):  {detail}",
+                  style={"color": C["dim"], "fontSize": "12px"}),
+        html.Span("  — marked read", style={"color": C["muted"], "fontSize": "11px", "marginLeft": "8px"}),
+    ], pad="10px 16px", extra={"marginBottom": "12px", "borderLeft": f"3px solid {C['amber']}"})
 
 
 if __name__ == "__main__":

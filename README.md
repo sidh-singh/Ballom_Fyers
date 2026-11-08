@@ -9,6 +9,10 @@ separate from the 12 fyers trading branches — its own port (**9000**) and its 
   server last changed** — so a **shutdown is detected and recorded with a date-time**.
 - **Beautiful dark dashboard:** status donut + stat tiles, a per-server **uptime timeline**
   (green = up, red = down) for the chosen day, one card per server, and a **downtime log**.
+- **Notification dots:** each server card shows a 🔔 badge when it had a recent status change
+  you haven't seen yet (e.g. a server that **shut down and restarted quickly** while you were
+  away). Click the badge to read what happened — it's then marked read and the dot clears
+  (persisted in `acks.json`, so it stays cleared across refreshes until the next change).
 - **Date dropdown** to browse the **last 1 week**; older data is auto-deleted.
 - **Auto-detects new servers:** add a server to `ip_list.txt` and it appears on the next
   refresh — no code change.

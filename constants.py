@@ -45,6 +45,7 @@ DATA_DIR = _default_data_dir()
 STATE_DIR = DATA_DIR / "state"
 HEALTH_DIR = STATE_DIR / "health"             # per-day history + current snapshot
 CURRENT_FILE = HEALTH_DIR / "current.json"    # latest status of every server
+ACKS_FILE = HEALTH_DIR / "acks.json"          # per-server "notifications read up to" watermark
 
 # ip_list.txt lives in the repo next to this file (tracked, user-editable)
 IP_LIST_FILE = Path(__file__).resolve().parent / "ip_list.txt"
