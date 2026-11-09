@@ -44,6 +44,7 @@ from constants import (
 )
 
 PROFIT_HISTORY = STATE_DIR / "profit_history.json"
+AUTO_TUNE = STATE_DIR / "auto_tune.json"        # daily auto-tuned ₹ target history (hedging)
 REFRESH_MS = 5000
 # Force-close password gate. The dashboard is network-reachable and Force-close hits REAL
 # positions, so the button requires this password. Stored as a SHA-256 hash (this repo is
@@ -595,6 +596,43 @@ def _position_block(pos):
     ], style={"margin": "6px 0"})
 
 
+def auto_tune_chart(symbol):
+    """Daily AUTO-TUNED hedging ₹ target: a step line of the amount used each day, with markers
+    coloured by that day's step (green = +100, red = −100, grey = hold) and a dashed **best-fit
+    average** line = the converged 'best amount'. One ₹ axis (no dual-axis); win% / net ₹ / trades
+    live in the hover. Returns a card, or None when the symbol has no tuning history."""
+    rec = (_read(AUTO_TUNE, {}) or {}).get(symbol) or {}
+    hist = rec.get("history") or []
+    if not hist:
+        return None
+    dates = [str(h.get("date", "")) for h in hist]
+    amts = [float(h.get("amount", 0)) for h in hist]
+    avg = round(sum(amts) / len(amts))
+    cur = rec.get("amount")
+    dcol = {"up": C["green"], "down": C["red"], "hold": C["muted"]}
+    mcol = [dcol.get(h.get("decision", "hold"), C["muted"]) for h in hist]
+    hover = [f"{d}<br>target ₹{a:,.0f}<br>win {float(h.get('win', 0)) * 100:.0f}%"
+             f"<br>net ₹{float(h.get('total', 0)):,.0f}<br>{int(h.get('trades', 0))} trades"
+             f"<br>step: {h.get('decision', 'hold')}" for d, a, h in zip(dates, amts, hist)]
+    fig = go.Figure()
+    fig.add_hline(y=avg, line_dash="dash", line_color=C["amber"], opacity=0.8)
+    fig.add_trace(go.Scatter(x=dates, y=amts, mode="lines+markers", name="target ₹",
+                             line=dict(color=C["blue"], width=2, shape="hv"),
+                             marker=dict(size=8, color=mcol, line=dict(width=1, color=C["card"])),
+                             hovertext=hover, hoverinfo="text"))
+    fig.update_layout(height=190, autosize=True, margin=dict(l=46, r=12, t=16, b=22),
+                      paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                      font=dict(color=C["dim"], size=10), showlegend=False)
+    fig.update_xaxes(showgrid=False, tickfont=dict(size=8, color=C["muted"]))
+    fig.update_yaxes(showgrid=True, gridcolor=C["grid"], tickfont=dict(size=9, color=C["muted"]))
+    _cur = f" · now ₹{float(cur):,.0f}" if isinstance(cur, (int, float)) else ""
+    title = html.Div(f"Auto-tuned ₹ target — daily · best-fit avg ₹{avg:,.0f}{_cur} (floor 100 · cap 1000)",
+                     style={"color": C["dim"], "fontSize": "11px", "fontWeight": "700",
+                            "letterSpacing": "0.3px", "margin": "0 0 4px"})
+    return _card([title, dcc.Graph(figure=fig, config={"displayModeBar": False, "responsive": True},
+                                   style={"width": "100%"})], pad="8px", extra={"marginTop": "10px"})
+
+
 def symbol_panel(symbol, s, closes, oh=None, events=None, show_avg=False,
                  historical=False, view_label="today"):
     # ── booked totals (shared) ──
@@ -663,7 +701,8 @@ def symbol_panel(symbol, s, closes, oh=None, events=None, show_avg=False,
         _rsi_block(s.get("rsi", {})),
     ], extra={"marginTop": "4px"})
 
-    return html.Div([header, price_card, mid, analysis],
+    atc = auto_tune_chart(symbol)                 # daily auto-tuned ₹ target (hedging) — bottom chart
+    return html.Div([header, price_card, mid, analysis] + ([atc] if atc else []),
                     style={"marginBottom": "18px", "borderBottom": f"1px solid {C['border']}",
                            "paddingBottom": "12px"})
 
