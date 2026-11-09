@@ -1,5 +1,44 @@
 # CHANGELOG — `fyers_live` / `fyers_demo`
 
+## 2026-11-10 — Signals overhaul: grey/opposite fallbacks, unified CE/PE, PE sign-inversion fix
+
+Reworked entry, booking, force-close and the DCA ladder around one rule — **a timeframe only counts
+when BOTH its RSI and MACD slopes agree (`_decisive` → +1/−1); grey or mismatched → fall back.** This
+cures the GOLDM/SILVERM "open-and-close-quickly at a small loss" churn and fixes a latent PE bug.
+
+**Root cause of the churn:** the old force-close had a fallback `if fc_score == 0 → leg M5 × (FORCE_CLOSE_S//2)`.
+A single M5 two-slope wobble = −12 = the trigger, so on thin-history commodity legs (higher TFs all
+grey) the stop collapsed to a one-bar M5 hair-trigger. Removed.
+
+**Force-close = genuine trend-reversal, index-backed.** Per TF in M15·H1·H4 (4/3/2): the active leg's
+own decisive slope; if that TF is grey, borrow the **INDEX's** same-TF decisive slope, polarity-adjusted
+(CE as-is, PE inverted). Fires at `fc_score ≤ −FORCE_CLOSE_S` (±18 scale). If every TF is grey on leg
+**and** index → `0` → **HOLD** (no twitch). The deep-history index future covers the thin option leg.
+
+**PE sign-inversion FIXED (real-money bug).** P&L is long-only (`cycle_pl = ltp·qty − cost_basis`, the
+stored `side` is ignored), so a bought PE profits when the **PE price rises** — but the slope exits/adds
+still *mirrored* BUY↔SELL as if shorting the index. Net effect on every PE: force-close fired when the
+PE was **winning** and never on a loss (no stop); the netting book fired on continuation not reversal;
+the martingale **pyramided into lows**. Now CE and PE are treated identically (both are LONG options):
+- **Force-close:** both close when the option turns **down** (`fc ≤ −FORCE_CLOSE_S`) — was `≥ +` for PE.
+- **Netting book:** both book on a **downward M5 reversal** in profit (leg M5 → index M5 polarity) — was PE-up.
+- **DCA ladder:** both average in on the leg's **own RSI ≤ oversold** — PE was adding on ≥ overbought.
+
+**Fresh entry — grey/opposite backups.** Direction from INDEX **H4 → H1**; then the candidate leg must be
+ADVANCING on **H4** (leg H4 → leg H1 → index H1·pol) and **M5** (leg M5 → index M5·pol → leg M1 → index M1·pol).
+The old same-TF `grey_fill` indicator-borrow is dropped in favour of these explicit chains. Candidate
+CE/PE is now picked by the H4→H1 direction (so a grey index H4 no longer blocks entry outright).
+
+**Booking.** Netting = downward M5 reversal (leg→index·pol) **above** the ₹ floor (`HEDGE_PER_UNIT×units+tax`,
+so still net-positive); hedging = the ₹ target, unchanged (₹500/unit). **Hedging target kept at ₹500.**
+
+**Plumbing:** the INDEX now computes slope signs for all fetched TFs (M1·M5·M15·H1·H4, frames already
+fetched → free); the active leg adds M1; the candidate leg fetches H4·H1·M5·M1 (`OPEN_LEG_TIMEFRAMES`).
+New `strategy._decisive` / `_resolve_confirm`, `symbol_worker._slope_signs`. **Close logs now record the
+reason** — `CLOSE_SENT`/`CLOSE_BOOKED … reason=target|book|force_close` (was unlabelled, so force-closes
+hid inside `CLOSE_BOOKED`). All 8 RSI+MACD branches (netting + hedging, live + demo). _Why: owner saw
+small-loss churn on commodities and asked to fix force-close as a real trend-reversal detector._
+
 ## 2026-11-09 — Dashboard tweak: per-position cumulative — sign-coloured line + hover dots
 
 Follow-up to the per-position bar+line chart (owner review):
