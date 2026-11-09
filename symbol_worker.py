@@ -447,8 +447,7 @@ class SymbolWorker(threading.Thread):
         computed on the MAIN INDEX (drives OPEN entry + the ladder-add gate + the entry veto).
         One fetch per timeframe, cached per bar. Returns (rsi_mtf, slopes, rsi_graphs, macd_graphs)."""
         needed = []
-        for tf in (["TIMEFRAME_M1"] + list(RSI_DCA_LADDER_TIMEFRAMES) + list(SLOPE_TIMEFRAMES)
-                   + ["TIMEFRAME_H6"]):     # H6 for the Alcadeias final forced-close
+        for tf in (["TIMEFRAME_M1"] + list(RSI_DCA_LADDER_TIMEFRAMES) + list(SLOPE_TIMEFRAMES)):
             if tf not in needed:
                 needed.append(tf)
         rsi_mtf, slopes, rsi_graphs, macd_graphs = {}, {}, {}, {}
