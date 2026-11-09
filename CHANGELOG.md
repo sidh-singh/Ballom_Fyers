@@ -1,5 +1,13 @@
 # CHANGELOG — `fyers_live` / `fyers_demo`
 
+## 2026-11-10 — Hedging profit target ₹500 → ₹100/unit (start small)
+
+Lowered the HEDGING ₹ profit target from ₹500 to **₹100 net per unit** (`hedge_per_unit` in the symbols
+file, which overrides `constants.HEDGE_PER_UNIT`) — owner wants to start small and raise it once the new
+signal logic is validated. Enabled symbols: NIFTY (all hedging branches) + GOLDM/SILVERM (demo). **Netting
+is unchanged** — its ₹500 is the book *floor* (keeps books net-positive), a different role. Live/Linux bots
+read a server-local `symbols.json` (gitignored), so that file must be edited on the server too. Hedging branches only.
+
 ## 2026-11-10 — Signals overhaul: grey/opposite fallbacks, unified CE/PE, PE sign-inversion fix
 
 Reworked entry, booking, force-close and the DCA ladder around one rule — **a timeframe only counts
