@@ -733,17 +733,22 @@ def _booking_series(closes):
 
 def per_position_chart(asset, closes):
     """Each position & what it earned, when: one coloured BAR per closed cycle (net ₹ after tax),
-    plus a LINE showing the cumulative running total — both on the same ₹ axis."""
+    plus a cumulative AREA — green while the running total is in profit, red while in loss."""
     labels, profits, colors, cum, peaks, hover = _booking_series(closes)
     fig = go.Figure()
     if closes:
+        cum_pos = [v if v > 0 else 0 for v in cum]        # green area where cumulative is positive
+        cum_neg = [v if v < 0 else 0 for v in cum]        # red area where cumulative is negative
+        fig.add_trace(go.Scatter(x=labels, y=cum_pos, mode="none", fill="tozeroy",
+                             fillcolor="rgba(34,197,94,0.22)", hoverinfo="skip", showlegend=False))
+        fig.add_trace(go.Scatter(x=labels, y=cum_neg, mode="none", fill="tozeroy",
+                             fillcolor="rgba(239,68,68,0.22)", hoverinfo="skip", showlegend=False))
         fig.add_trace(go.Bar(x=labels, y=profits, marker=dict(color=colors), name="per position",
                              text=[f"₹{p:,.0f}" for p in profits], textposition="outside",
                              textfont=dict(size=9, color=C["dim"]), cliponaxis=False,
                              hovertext=hover, hoverinfo="text"))
-        fig.add_trace(go.Scatter(x=labels, y=cum, mode="lines+markers", name="cumulative",
-                             line=dict(color=C["blue"], width=2, shape="spline"),
-                             marker=dict(size=4, color=C["blue"], line=dict(width=1, color=C["bg"])),
+        fig.add_trace(go.Scatter(x=labels, y=cum, mode="lines", name="cumulative",
+                             line=dict(color=C["dim"], width=1.3, shape="spline"),
                              hovertext=[f"cumulative ₹{v:,.2f}" for v in cum], hoverinfo="text"))
     fig.add_hline(y=0, line_dash="dot", line_color=C["muted"], opacity=0.5)
     fig.update_layout(height=210, autosize=True, margin=dict(l=40, r=12, t=22, b=20),
