@@ -1,5 +1,9 @@
 # CHANGELOG — `fyers_live` / `fyers_demo`
 
+## 2026-11-09 — Tuned RSI+MACD booking: profit ₹300→₹500/unit, loss floor ₹200→₹300/unit
+
+Owner's first tune of the new booking parameters (introduced earlier today). `HEDGE_PER_UNIT` 300 → **500** (bigger NET profit per unit — the hedging ₹ target and the netting book floor) and `FC_MIN_LOSS_PER_UNIT` 200 → **300** (the force-close stop tolerates a bit more before firing). ≈ **1.7 : 1 reward:risk**, net of taxes, scaling with `units`. All 8 RSI+MACD branches (hedging + netting, live + demo). _Why: owner picked the ₹500 / ₹300 profile to make each booking a more meaningful "tax + extra" while keeping churn low._
+
 ## 2026-11-09 — Hedging: cut force-close churn (both-slope stop + per-unit loss floor)
 
 Owner saw the HEDGING bots booking many small profits AND small losses while opening lots of little positions. Diagnosis: the ₹ profit **target** books net ≈ ₹300×units + taxes (fine) — the churn came from the **force-close stop-loss**, which was twitchy. It fired on M15 when **EITHER** the leg's RSI or MACD slope reversed (`FORCE_CLOSE_S = 1`), booking whatever tiny P&L was there, then re-entered. That stream of exits + re-entries = the small ± bookings.
