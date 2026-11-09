@@ -85,7 +85,7 @@ class Strategy:
         """RAW weighted slope score for one section's {TF: weight} map.
             score = Σ weight * (rsi_sign + macd_sign)   over the map  (each sign ∈ {-1,0,+1})
         Range ±(2 * Σ|weight|): e.g. {'H4':1,'M5':1} -> -4..+4 ; {'M15':1} -> -2..+2 ; the
-        4/3/2/1 force-close set -> -20..+20. A missing/zero slope contributes 0; empty map -> 0.
+        4/3/2 force-close set -> -18..+18. A missing/zero slope contributes 0; empty map -> 0.
 
         grey_fill (OPEN + BOOK): when EXACTLY ONE of a timeframe's two signs is 0 (grey — its
         RSI or MACD is at a peak/plateau so the pivot slope is undefined), substitute the OTHER
@@ -165,7 +165,7 @@ class Strategy:
         _SCORE_WEIGHTS):
           - open_score  -> fresh entry + the DCA ladder-add gate   (default TFs: H4, M5)
           - book_score  -> profit-book (this variant)              (default TF: M15)
-          - fc_score    -> force-close                             (default TFs: M15,H1,H4,D1 w4/3/2/1)
+          - fc_score    -> force-close                             (default TFs: M15,H1,H4 w4/3/2)
 
           Flat: open when the OPEN score is directional AND the FORCE-CLOSE score agrees
                 (agreement gate); else WAIT. Single position, cooldown-gated.
@@ -219,8 +219,8 @@ class Strategy:
         # ── Per-section RAW weighted slope scores ──
         # OPEN (entry + ladder-add gate) + the entry agreement-gate veto are read on the INDEX.
         open_score = self._weighted_score(slopes, OPEN_SCORE_WEIGHTS, grey_fill=True)
-        # FORCE-CLOSE (Alcadeias): a weighted MULTI-TIMEFRAME reversal on the INDEX — M15·H1·H4·D1
-        # (4/3/2/1), range ±20, threshold FORCE_CLOSE_S=12. A high-conviction trend reversal, NOT a
+        # FORCE-CLOSE (Alcadeias): a weighted MULTI-TIMEFRAME reversal on the INDEX — M15·H1·H4
+        # (4/3/2), range ±18, threshold FORCE_CLOSE_S=12. A high-conviction trend reversal, NOT a
         # single-M15 trigger, so it no longer pre-empts the RSI DCA ladder (which averages up to H4).
         # Faithful to Alcadeias (reads the instrument it trades); on options we read the underlying.
         fc_score = self._weighted_score(slopes, FORCE_CLOSE_SCORE_WEIGHTS)
