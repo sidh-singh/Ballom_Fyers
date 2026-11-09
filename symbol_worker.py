@@ -270,7 +270,8 @@ class SymbolWorker(threading.Thread):
         net = self.ctx.tracker.get_net_qty(leg_sym)
         mg = self.ctx.tracker.get_martingale_count(leg_sym)
         count = mg + 1
-        charges = estimate_trade_charges(net or 1, ltp or 1, num_orders=2 + mg)
+        charges = estimate_trade_charges(net or 1, ltp or 1, num_orders=2 + mg,
+                                         is_commodity=(self.asset_type == "COMMODITY"))
         threshold = float(self.hedge_per_unit * self.units + charges)
         leg = {"count": count, "total_profit": cycle, "total_volume": net,
                "first_profit": cycle, "last_profit": cycle,
@@ -363,7 +364,8 @@ class SymbolWorker(threading.Thread):
         exit_px = self._fill_price(leg_sym, ltp)
         mg = self.ctx.tracker.get_martingale_count(leg_sym)
         qty = self.ctx.tracker.get_net_qty(leg_sym)
-        charges = estimate_trade_charges(qty or 1, exit_px or 1, num_orders=2 + mg)
+        charges = estimate_trade_charges(qty or 1, exit_px or 1, num_orders=2 + mg,
+                                         is_commodity=(self.asset_type == "COMMODITY"))
         net_pl = self.ctx.tracker.record_close(leg_sym, exit_px, charges)
         log_strategy_event(self.symbol, self.active["side"], "CLOSE_BOOKED",
                            pl=round(net_pl, 2),
