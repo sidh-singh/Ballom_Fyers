@@ -207,7 +207,6 @@ class Strategy:
         rsi_15m = rsi_mtf.get('TIMEFRAME_M15', 50.0) if rsi_mtf else 50.0
         rsi_1h = rsi_mtf.get('TIMEFRAME_H1', 50.0) if rsi_mtf else 50.0
         rsi_4h = rsi_mtf.get('TIMEFRAME_H4', 50.0) if rsi_mtf else 50.0
-        rsi_6h = rsi_mtf.get('TIMEFRAME_H6', 50.0) if rsi_mtf else 50.0   # Alcadeias H6 final forced-close
 
         slope_direction = self._slope_direction(slopes)   # structural read (dashboard/compare only)
 
@@ -273,9 +272,6 @@ class Strategy:
             elif buy_fc:
                 buy_status = Signal.CLOSE_BUY
                 exit_reason = 'force_close'
-            elif buy_count == 6 and rsi_6h <= RSI_OVERSOLD:
-                buy_status = Signal.CLOSE_BUY       # Alcadeias H6 final forced-close (ladder maxed)
-                exit_reason = 'final_h6'
             elif buy_add_ok:
                 if rsi_1m <= RSI_OVERSOLD and buy_count == 1:
                     buy_status = Signal.BUY_MORE
@@ -296,9 +292,6 @@ class Strategy:
             elif sell_fc:
                 sell_status = Signal.CLOSE_SELL
                 exit_reason = 'force_close'
-            elif sell_count == 6 and rsi_6h >= RSI_OVERBOUGHT:
-                sell_status = Signal.CLOSE_SELL     # Alcadeias H6 final forced-close (ladder maxed)
-                exit_reason = 'final_h6'
             elif sell_add_ok:
                 if rsi_1m >= RSI_OVERBOUGHT and sell_count == 1:
                     sell_status = Signal.SELL_MORE

@@ -1,5 +1,9 @@
 # CHANGELOG — `fyers_live` / `fyers_demo`
 
+## 2026-11-09 — Force-close: remove the H6 final-close (owner)
+
+Removed the H6 RSI final forced-close added earlier today (per owner, both families). A maxed-out ladder (count 6) no longer auto-closes on the H6 RSI — it holds until the normal profit exit (netting book-score / hedging ₹ target) or the multi-TF index force-close. `symbol_worker` no longer fetches the H6 RSI. All 8 RSI+MACD branches. _Why: owner asked to remove the H6 final-close from both netting and hedging._
+
 ## 2026-11-09 — Force-close: drop D1 (now M15·H1·H4)
 
 Per owner — removed the daily (D1) timeframe from the force-close score: `FORCE_CLOSE_SCORE_WEIGHTS` is now `{M15:4, H1:3, H4:2}` (range ±18; was +D1, ±20). The D1 pivot barely moves intraday and the Alcadeias source itself flags it as a wasted extra daily rates call, so this also drops the D1 index slope fetch per tick (`SLOPE_TIMEFRAMES` no longer includes D1). `FORCE_CLOSE_S` stays **12** — firing is unchanged: M15 **and** H1 (−14), or M15 **and** H4 (−12), fully reversed still force-closes; a lone M15 reversal (−8) still lets the ladder add. Netting references Alcadeias `rsimacd_btcusd1_wd_exp_h`, hedging `rsimacd_h6_btcusd1_wd_exp_h`. All 8 RSI+MACD branches. _Why: owner saw D1 in the force-close and confirmed it isn't needed._
