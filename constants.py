@@ -300,7 +300,7 @@ LEG_SLOPE_TIMEFRAMES = ['TIMEFRAME_' + _tf for _tf in dict.fromkeys(
 )]                                                           # force-close moved to the INDEX (multi-TF)
 # CANDIDATE-leg slope set, computed while FLAT to gate a fresh entry: the option leg's own H4 + M5
 # (both RSI+MACD must be +ve), plus M15 for the anti-vibration check (must not already be reversing).
-OPEN_LEG_TIMEFRAMES = ['TIMEFRAME_H4', 'TIMEFRAME_M5', 'TIMEFRAME_M15']
+OPEN_LEG_TIMEFRAMES = ['TIMEFRAME_H4', 'TIMEFRAME_M5']   # candidate-leg entry gate (M15 dropped — owner)
 
 # ── Pivot-slope params (RSI + MACD-histogram) ──
 PEAK_LOOKBACK = 20             # candles scanned for the latest pivot
