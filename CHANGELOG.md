@@ -7,6 +7,13 @@ Format: `YYYY-MM-DD` — change — _why_.
 
 ---
 
+## 2026-11-09 — Dashboard tweak: per-position bar+line (cumulative), Analysis simplified + always-on
+
+Follow-up to the redesign above (owner review):
+- The **Profit per position** chart is now **bar + line** — a coloured bar per closed cycle PLUS a blue **cumulative** running-total line (same ₹ axis, with a legend).
+- The **Analysis** section is **no longer collapsible** (always visible) and **drops** the RSI/MACD pivot slope mini-charts and the separate cumulative/drawdown chart — the compact 3-way slopes (above) and the per-position cumulative line now cover those. Analysis keeps **pair · entry scores · RSI**. The dead `cumulative_chart()` was removed.
+All 8 RSI+MACD branches.
+
 ## 2026-11-09 — Dashboard redesign: OHLC-primary, 3-way slopes (Index/CE/PE), per-position bars, collapsed Analysis
 
 Reworked each symbol panel to cut bulk and focus on the price action:
