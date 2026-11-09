@@ -7,6 +7,10 @@ Format: `YYYY-MM-DD` — change — _why_.
 
 ---
 
+## 2026-11-09 — Tuned RSI+MACD booking: profit ₹300→₹500/unit, loss floor ₹200→₹300/unit
+
+Owner's first tune of the new booking parameters (introduced earlier today). `HEDGE_PER_UNIT` 300 → **500** (bigger NET profit per unit — the hedging ₹ target and the netting book floor) and `FC_MIN_LOSS_PER_UNIT` 200 → **300** (the force-close stop tolerates a bit more before firing). ≈ **1.7 : 1 reward:risk**, net of taxes, scaling with `units`. All 8 RSI+MACD branches (hedging + netting, live + demo). _Why: owner picked the ₹500 / ₹300 profile to make each booking a more meaningful "tax + extra" while keeping churn low._
+
 ## 2026-11-09 — Netting: cut force-close churn too (loss side — profit-book already clean)
 
 Same small-loss churn the hedging branches had: the **force-close stop-loss** fired on M15 when **EITHER** the leg's RSI or MACD slope reversed (`FORCE_CLOSE_S = 1`), booking tiny losses then re-entering. Netting's **profit-book exit is different and already clean** — it books only when in profit **above the tax floor** (`close_threshold`) **AND** the M5 BOOK score reverses (`book_score <= -BOOK_S`), so it never booked a tiny/negative "profit." Only the loss side needed the fix.

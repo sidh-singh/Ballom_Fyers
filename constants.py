@@ -233,7 +233,7 @@ STEP_UP_BALANCE      = 100_000  # ₹ per unit tier: units = floor(bal/this)+1 (
                                 #   <1L→1 lot, 1L–2L→2 lots, 2L–3L→3 lots, …
                                 #   (per-symbol override in symbols.json)
 UNIT_MAX_LIMIT       = 10       # cap on units
-HEDGE_PER_UNIT       = 300      # ₹ NET profit target per unit; total target = this×units + taxes,
+HEDGE_PER_UNIT       = 500      # ₹ NET profit target per unit; total target = this×units + taxes,
                                 #   so it scales with balance (unit tiers). ₹300 ≈ ~10–15 NIFTY pts
                                 #   on 1 lot — clears taxes + noise. Per-symbol: "hedge_per_unit".
 MAX_MARTINGALE_LEVEL = 5        # 5 RSI adds (M1/M5/M15/H1/H4), then H6 forced close
@@ -271,7 +271,7 @@ FORCE_CLOSE_S = 2              # force-close on M15 only when BOTH RSI AND MACD 
 # FC_MIN_LOSS_PER_UNIT × units — let a shallow dip recover / average instead of booking a tiny churn
 # loss. The stop fires only once the loss reaches the floor AND both M15 slopes have reversed. The
 # profit-book exit (variant A) is unchanged. Set 0 to disable the floor (stop on both-slopes alone).
-FC_MIN_LOSS_PER_UNIT = 200
+FC_MIN_LOSS_PER_UNIT = 300
 BOOK_S        = 2              # profit-book (NETTING only): in profit, book when BOTH M5 slopes (RSI+MACD)
                                # reverse (range ±2 for {M5}; BUY book_score <= -2).
 
