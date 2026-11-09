@@ -218,13 +218,15 @@ class Strategy:
         # ── Per-section RAW weighted slope scores ──
         # OPEN (entry + ladder-add gate) + the entry agreement-gate veto are read on the INDEX.
         open_score = self._weighted_score(slopes, OPEN_SCORE_WEIGHTS, grey_fill=True)
-        # FORCE-CLOSE (Alcadeias): a weighted MULTI-TIMEFRAME reversal on the INDEX — M15·H1·H4
-        # (4/3/2), range ±18, threshold FORCE_CLOSE_S=12. A high-conviction trend reversal, NOT a
-        # single-M15 trigger, so it no longer pre-empts the RSI DCA ladder (which averages up to H4).
-        # Faithful to Alcadeias (reads the instrument it trades); on options we read the underlying.
-        fc_score = self._weighted_score(slopes, FORCE_CLOSE_SCORE_WEIGHTS)
-        fc_gate = fc_score                                   # entry agreement-gate uses the same score
-        # BOOK (profit) exit still reads the ACTIVE LEG's own option chart.
+        # FORCE-CLOSE (Alcadeias "read what you trade"): a weighted MULTI-TIMEFRAME reversal on the
+        # ACTIVE LEG's own option chart — M15·H1·H4 (4/3/2), range ±18, threshold FORCE_CLOSE_S=12.
+        # High-conviction, so it does not pre-empt the RSI DCA ladder. Fallback for a data-thin leg
+        # whose higher TFs have no pivot yet: the leg's own M5 both-slope reversal (×FORCE_CLOSE_S//2).
+        fc_score = self._weighted_score(leg_slopes, FORCE_CLOSE_SCORE_WEIGHTS)
+        if fc_score == 0:
+            fc_score = self._weighted_score(leg_slopes, {'M5': 1}) * (FORCE_CLOSE_S // 2)
+        fc_gate = fc_score                                   # entry agreement-gate (display) uses the same score
+        # BOOK (profit) exit also reads the ACTIVE LEG's own option chart (M5).
         book_score = self._weighted_score(leg_slopes, BOOK_SCORE_WEIGHTS, grey_fill=True)
 
         # Fresh-entry direction (agreement gate, on the index).
