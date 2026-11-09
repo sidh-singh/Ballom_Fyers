@@ -1,5 +1,9 @@
 # CHANGELOG — `fyers_live` / `fyers_demo`
 
+## 2026-11-09 — Fix: NIFTY profit target now actually applies (symbols.json override was pinning it)
+
+The ₹500 profit tune earlier today changed `constants.HEDGE_PER_UNIT`, but `symbol_worker` reads `cfg.get("hedge_per_unit", HEDGE_PER_UNIT)` — the **per-symbol `symbols.json` value wins**. NIFTY (the only enabled symbol) had `"hedge_per_unit": 300`, so it was still booking ₹300/unit, NOT ₹500. Raised NIFTY `hedge_per_unit` 300 → **500** in `symbols.json` (and `symbols.example.json` on linux) so the chosen ₹500 target actually takes effect. The loss floor (`FC_MIN_LOSS_PER_UNIT`, a global constant) was already live at ₹300/unit. ⚠️ The **live Linux server runs its own un-tracked `symbols.json`** — edit it there too (set NIFTY `hedge_per_unit: 500`) for the running bot to pick it up. GOLD/SILVER remain disabled. _Why: cross-check for the owner surfaced that the per-symbol override silently blocked the ₹500 tune._
+
 ## 2026-11-09 — Tuned RSI+MACD booking: profit ₹300→₹500/unit, loss floor ₹200→₹300/unit
 
 Owner's first tune of the new booking parameters (introduced earlier today). `HEDGE_PER_UNIT` 300 → **500** (bigger NET profit per unit — the hedging ₹ target and the netting book floor) and `FC_MIN_LOSS_PER_UNIT` 200 → **300** (the force-close stop tolerates a bit more before firing). ≈ **1.7 : 1 reward:risk**, net of taxes, scaling with `units`. All 8 RSI+MACD branches (hedging + netting, live + demo). _Why: owner picked the ₹500 / ₹300 profile to make each booking a more meaningful "tax + extra" while keeping churn low._
