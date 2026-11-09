@@ -7,6 +7,18 @@ Format: `YYYY-MM-DD` — change — _why_.
 
 ---
 
+## 2026-11-09 — Dashboard: automatic light / dark theme by the IST clock
+
+The dashboard now **themes itself to the time of day** — a light palette from **06:00 to 18:00 IST** and the original dark palette overnight — matching the `health_check` dashboard. No toggle, no restart: a single colour dict `C` is re-applied at the top of every 5-second refresh (`_apply_theme()` chooses light/dark from `now_ist().hour` against `DAY_START_HOUR`/`DAY_END_HOUR` = 6/18), and the page background + title are returned as callback outputs, so the whole UI — KPI cards, per-symbol panels, Plotly charts (transparent paper, so they inherit the themed card), the strategy log and the API-limit panel — recolours live the moment the clock crosses 06:00 / 18:00. The force-close / add-balance inputs keep a fixed neutral style so a half-typed password is never wiped by a refresh. Two palettes live side by side as `THEME_DARK` / `THEME_LIGHT`; edit the two hour constants to move the window. All 12 branches (HAM + RSI+MACD dashboards both patched). _Why: owner wanted the same auto light/dark-by-IST behaviour the health_check dashboard already had._
+
+## 2026-11-09 — Force-close is now password-protected (+ how to reset the password)
+
+Because the dashboard is reachable on the network (see next entry) and **Force-close flattens a REAL position**, the button now requires a password. A password box sits in the controls row; `_on_force_close` hashes the entry (SHA-256) and compares it to `_FC_HASH` — a wrong or empty password returns `⛔ wrong password — force-close for <sym> NOT sent` and queues nothing. **The password is never stored in the repo as plaintext** (this repo is public) — only its SHA-256 hash is compiled in. **To reset it** (if leaked), use any one of these, then restart the dashboard: `FORCE_CLOSE_PASSWORD=<new>` (plaintext env, hashed at startup), `FORCE_CLOSE_PASSWORD_SHA256=<hash>` (pre-computed hash env), or change the built-in default hash in `dashboard.py` (`_FC_HASH`) — compute a new one with `python -c "import hashlib,sys; print(hashlib.sha256(sys.argv[1].encode()).hexdigest())" "<new>"`. Precedence: env plaintext → env hash → built-in default. See **DASHBOARD.md → Security** for the full procedure (systemd / Windows / shell). All 12 branches. _Why: owner asked to gate force-close with a password, and how to reset it if it is compromised._
+
+## 2026-11-09 — Dashboard reachable from other devices (bind 0.0.0.0) + mobile access
+
+The dashboard bound to `127.0.0.1` (local only). It now binds **`0.0.0.0`**, so it is reachable at **`http://<server-ip>:<port>`** from a phone or another PC on the network — the same as the `health_check` dashboard. The startup line now prints `dashboard → http://0.0.0.0:<port>   (reachable at http://<server-ip>:<port>)`. Open the port in the host firewall (Linux: `ufw allow <port>/tcp`; Windows: an inbound rule for Python). The dashboard is read-only apart from the now-password-gated Force-close, but prefer a **VPN / SSH tunnel / authenticated reverse proxy** when exposing it beyond a trusted LAN. See **DASHBOARD.md → Access**. All 12 branches. _Why: owner wanted to open each bot's dashboard from a phone / another machine by IP:port, like health_check._
+
 ## 2026-11-09 — Dashboard controls: per-symbol Force-close button + demo Add-balance
 
 Two dashboard actions that reach the engine through a new command channel — the dashboard (a separate read-only process) writes a JSON file to `state/commands/`, and the supervisor executes it each tick then deletes it (same spirit as the brake flag; `application._process_commands`). `constants.COMMANDS_DIR`.
