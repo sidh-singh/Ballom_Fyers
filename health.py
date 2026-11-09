@@ -65,6 +65,7 @@ def check_server(server: dict) -> dict:
         "name": server["name"],
         "ip": ip,
         "os_type": os_type,
+        "provider": server.get("provider", ""),
         "port": port,
         "status": "UP" if up else "DOWN",
         "reachable": reachable,       # ICMP ping

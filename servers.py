@@ -7,11 +7,13 @@ on the dashboard's next refresh (no code change):
     Name: MT12
     IP: 1.2.3.4
     OS: Windows          # optional — omit it and the OS is inferred from the name
+    Provider: Veeble     # optional — the VPS / cloud host, shown in small text on the card
 
     (1.2.3.4) - MT12     # legacy one-line style, still accepted
 
 OS resolution: an explicit "OS: Windows|Linux" wins; otherwise a name starting with
 "MT" (case-insensitive) is WINDOWS and anything else (e.g. FYERS) is LINUX.
+Provider is free text (e.g. "Veeble"); blank when not given.
 """
 from __future__ import annotations
 
@@ -24,6 +26,7 @@ _IPV4 = r"\d{1,3}(?:\.\d{1,3}){3}"
 _NAME_RE = re.compile(r"Name:\s*([^\r\n]+)", re.IGNORECASE)
 _IP_RE = re.compile(r"IP:\s*(" + _IPV4 + r")", re.IGNORECASE)
 _OS_RE = re.compile(r"OS:\s*([A-Za-z][A-Za-z0-9 _-]*)", re.IGNORECASE)
+_PROVIDER_RE = re.compile(r"Provider:\s*([^\r\n]+)", re.IGNORECASE)
 _LINE_RE = re.compile(r"\(?\s*(" + _IPV4 + r")\s*\)?\s*[-–:]\s*([^\r\n]+)")
 
 
@@ -56,13 +59,15 @@ def _valid_ip(ip: str) -> bool:
     return all(o.isdigit() and 0 <= int(o) <= 255 for o in ip.split("."))
 
 
-def _add(out: list, seen: set, name: str, ip: str, os_type: str | None) -> None:
+def _add(out: list, seen: set, name: str, ip: str, os_type: str | None,
+         provider: str | None = None) -> None:
     name = (name or "").strip()
     ip = (ip or "").strip()
     if not name or not ip or ip in seen or not _valid_ip(ip):
         return
     seen.add(ip)
-    out.append({"name": name, "ip": ip, "os_type": os_type or os_of(name)})
+    out.append({"name": name, "ip": ip, "os_type": os_type or os_of(name),
+                "provider": (provider or "").strip()})
 
 
 def load_servers(path: Path = IP_LIST_FILE) -> list[dict]:
@@ -82,8 +87,10 @@ def load_servers(path: Path = IP_LIST_FILE) -> list[dict]:
         nm, ipm = _NAME_RE.search(block), _IP_RE.search(block)
         if nm and ipm:
             osm = _OS_RE.search(block)
+            pm = _PROVIDER_RE.search(block)
             _add(out, seen, nm.group(1), ipm.group(1),
-                 _norm_os(osm.group(1)) if osm else None)
+                 _norm_os(osm.group(1)) if osm else None,
+                 pm.group(1) if pm else None)
 
     # 2) legacy one-line "(IP) - NAME"
     for ip, name in _LINE_RE.findall(text):
@@ -94,4 +101,4 @@ def load_servers(path: Path = IP_LIST_FILE) -> list[dict]:
 
 if __name__ == "__main__":
     for s in load_servers():
-        print(f"{s['name']:<8} {s['ip']:<16} {s['os_type']}")
+        print(f"{s['name']:<8} {s['ip']:<16} {s['os_type']:<8} {s.get('provider','')}")

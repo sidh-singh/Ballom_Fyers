@@ -1,52 +1,65 @@
 # Ballom server list for the health-check dashboard.
-# Add a server by appending a Name / IP / OS block like the ones below. The dashboard
-# auto-detects any new entry on its next refresh — no code change needed.
+# Add a server by appending a Name / IP / OS / Provider block like the ones below. The
+# dashboard auto-detects any new entry on its next refresh — no code change needed.
 #   OS: Windows            -> RDP / port 3389 is probed; shows the Windows logo
 #   OS: Debian/Ubuntu/Linux -> SSH / port 22 is probed; shows that distro's logo
 #   OS: Mac                -> SSH / port 22 is probed; shows the Apple logo
 # OS is optional: if you omit it, it's inferred from the name (MT* = Windows, else Linux).
+# Provider is optional: the VPS / cloud host (e.g. Veeble). It is shown in small text on
+# each server card; omit it and the card simply leaves it blank.
 # The legacy "(IP) - NAME" one-line style is still accepted too.
 
 Name: MT1
 IP: 37.220.31.63
 OS: Windows
+Provider: Veeble
 
 Name: MT2
 IP: 37.220.31.91
 OS: Windows
+Provider: Veeble
 
 Name: MT3
 IP: 37.220.31.43
 OS: Windows
+Provider: Veeble
 
 Name: MT4
 IP: 198.24.151.216
 OS: Windows
+Provider: Veeble
 
 Name: MT5
 IP: 37.220.31.55
 OS: Windows
+Provider: Veeble
 
 Name: MT6
 IP: 88.150.227.84
 OS: Windows
+Provider: Veeble
 
 Name: MT7
 IP: 109.200.24.80
 OS: Windows
+Provider: Veeble
 
 Name: MT8
 IP: 109.200.24.41
 OS: Windows
+Provider: Veeble
 
 Name: MT9
 IP: 88.150.138.110
 OS: Windows
+Provider: Veeble
 
 Name: MT10
 IP: 88.150.138.93
 OS: Windows
+Provider: Veeble
 
 Name: FYERS
 IP: 88.150.138.80
 OS: Debian
+Provider: Veeble

@@ -27,15 +27,20 @@ separate from the 12 fyers trading branches — its own port (**9000**) and its 
 Name: MT1
 IP: 37.220.31.63
 OS: Windows
+Provider: Veeble
 
 Name: FYERS
 IP: 88.150.138.80
-OS: Linux
+OS: Debian
+Provider: Veeble
 ```
 - **`OS:`** sets the type explicitly and picks the **brand logo** shown on the card:
   `Windows`, `Debian`, `Ubuntu`, `Mac`, or `Linux` (generic). Windows probes RDP (3389);
   everything else probes SSH (22). Add more distros by dropping an SVG in `assets/icons/`.
 - `OS:` is **optional**: if you omit it, it's inferred from the name (names starting with `MT` → Windows, anything else → Linux).
+- **`Provider:`** is the **VPS / cloud host** (free text, e.g. `Veeble`). It's shown in small
+  text on each server card (`☁ Veeble`), next to the IP and OS logo. It's **optional** — omit
+  it and the card just leaves it blank. All 11 current servers are on **Veeble**.
 - The old `(IP) - NAME` one-line style is still accepted (OS inferred from the name).
 
 ## How a server is checked (no credentials needed)

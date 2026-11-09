@@ -298,7 +298,10 @@ def server_cards(servers, uptimes, downcounts, historical, notif=None):
         rows = [
             html.Div(header, style={"display": "flex", "alignItems": "center"}),
             html.Div([html.Span(s.get("ip", ""), style={"color": C["dim"], "fontSize": "12px"}),
-                      html.Span("  ·  ", style={"color": C["muted"]}), _os_badge(s.get("os_type", "linux"))],
+                      html.Span("  ·  ", style={"color": C["muted"]}), _os_badge(s.get("os_type", "linux")),
+                      *([html.Span(f"  ·  ☁ {s.get('provider')}",
+                                   style={"color": C["muted"], "fontSize": "11px"})]
+                        if s.get("provider") else [])],
                      style={"marginTop": "6px"}),
             html.Div([
                 html.Span(f"uptime {up_pct}%", style={"color": C["green"] if up_pct >= 99 else C["amber"],
@@ -401,6 +404,7 @@ def _refresh(view_date, _):
         live = {s["name"]: s for s in (current.get("servers") or [])}
         servers = [{"name": n, "ip": live.get(n, {}).get("ip", ""),
                     "os_type": live.get(n, {}).get("os_type", "linux"),
+                    "provider": live.get(n, {}).get("provider", ""),
                     "status": None} for n in sorted(baseline)]
     else:
         servers = [{**s, "status": None} for s in load_servers()]
