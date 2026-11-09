@@ -7,6 +7,13 @@ Format: `YYYY-MM-DD` — change — _why_.
 
 ---
 
+## 2026-11-09 — Dashboard tweak: per-position cumulative — sign-coloured line + hover dots
+
+Follow-up to the per-position bar+line chart (owner review):
+- The **cumulative** running-total on the *Profit per position* chart is now a **sign-coloured line** — green while the running total is in profit, red while in loss (was a single grey line) — layered over the existing green/red cumulative **area**. Rendered as two sign-split line traces (`connectgaps=False`, hover suppressed) so profit and loss stretches read in their own colour.
+- Added **dotted markers** on the cumulative: one dot per closed cycle, coloured by the running-total sign, whose hover reveals **all** of that cycle's details (time · gross ₹ · tax ₹ · net ₹ · cumulative net ₹ · peak ₹ · drawdown ₹). Only the dots answer hover, so the detail tooltip never fights the line.
+All 8 RSI+MACD branches. _Why: owner wanted the cumulative line coloured by P/L plus a dotted detail-on-hover overlay._
+
 ## 2026-11-09 — Dashboard tweak: per-position bar+line (cumulative), Analysis simplified + always-on
 
 Follow-up to the redesign above (owner review):

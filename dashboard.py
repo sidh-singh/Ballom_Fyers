@@ -733,7 +733,8 @@ def _booking_series(closes):
 
 def per_position_chart(asset, closes):
     """Each position & what it earned, when: one coloured BAR per closed cycle (net ₹ after tax),
-    plus a cumulative AREA — green while the running total is in profit, red while in loss."""
+    plus a cumulative AREA + sign-coloured LINE (green in profit, red in loss) and dotted
+    markers that reveal each cycle's full details (gross/tax/net/cum/peak/DD) on hover."""
     labels, profits, colors, cum, peaks, hover = _booking_series(closes)
     fig = go.Figure()
     if closes:
@@ -747,9 +748,20 @@ def per_position_chart(asset, closes):
                              text=[f"₹{p:,.0f}" for p in profits], textposition="outside",
                              textfont=dict(size=9, color=C["dim"]), cliponaxis=False,
                              hovertext=hover, hoverinfo="text"))
-        fig.add_trace(go.Scatter(x=labels, y=cum, mode="lines", name="cumulative",
-                             line=dict(color=C["dim"], width=1.3, shape="spline"),
-                             hovertext=[f"cumulative ₹{v:,.2f}" for v in cum], hoverinfo="text"))
+        # cumulative LINE, coloured by sign — green while the running total is in profit, red while in loss
+        cum_line_pos = [v if v >= 0 else None for v in cum]
+        cum_line_neg = [v if v < 0 else None for v in cum]
+        fig.add_trace(go.Scatter(x=labels, y=cum_line_pos, mode="lines", showlegend=False,
+                             line=dict(color=C["green"], width=2, shape="spline"),
+                             connectgaps=False, hoverinfo="skip"))
+        fig.add_trace(go.Scatter(x=labels, y=cum_line_neg, mode="lines", showlegend=False,
+                             line=dict(color=C["red"], width=2, shape="spline"),
+                             connectgaps=False, hoverinfo="skip"))
+        # dotted markers on the cumulative — hover reveals ALL details for that cycle (gross/tax/net/cum/peak/DD)
+        fig.add_trace(go.Scatter(x=labels, y=cum, mode="markers", name="cumulative",
+                             marker=dict(size=7, line=dict(width=1, color=C["card"]),
+                                         color=[C["green"] if v >= 0 else C["red"] for v in cum]),
+                             hovertext=hover, hoverinfo="text"))
     fig.add_hline(y=0, line_dash="dot", line_color=C["muted"], opacity=0.5)
     fig.update_layout(height=210, autosize=True, margin=dict(l=40, r=12, t=22, b=20),
                       paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
