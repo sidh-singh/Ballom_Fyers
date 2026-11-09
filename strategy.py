@@ -21,7 +21,7 @@ from enum import Enum
 from constants import (
     FIBO_SEQUENCE_LENGTH,
     RSI_OVERSOLD, RSI_OVERBOUGHT,
-    ENTRY_S, ENTRY_AGREE_S, LADDER_S, FORCE_CLOSE_S, BOOK_S,
+    ENTRY_S, ENTRY_AGREE_S, LADDER_S, FORCE_CLOSE_S, BOOK_S, FC_MIN_LOSS_PER_UNIT,
     OPEN_SCORE_WEIGHTS, BOOK_SCORE_WEIGHTS, FORCE_CLOSE_SCORE_WEIGHTS,
 )
 
@@ -172,7 +172,8 @@ class Strategy:
           Open BUY: exits checked FIRST, then the RSI DCA ladder —
             - profit-book: once buy_profit > close_threshold (= HEDGE_PER_UNIT*units + charges,
               so net ≥ ₹100×units) AND book_score <= -BOOK_S -> CLOSE_BUY (reason 'book').
-            - force-close: fc_score <= -FORCE_CLOSE_S -> CLOSE_BUY (reason 'force_close').
+            - force-close: BOTH M15 slopes reverse (fc_score <= -FORCE_CLOSE_S) AND loss past the
+              floor (FC_MIN_LOSS_PER_UNIT × units) -> CLOSE_BUY (reason 'force_close').
             - DCA add (gated on open_score): BUY_MORE at RSI 35, one tier per count
               1->M1 2->M5 3->M15 4->H1 5->H4 (max 6 positions).
           Open SELL mirrors.
@@ -261,10 +262,16 @@ class Strategy:
         buy_add_ok = open_score > -LADDER_S
         sell_add_ok = open_score < LADDER_S
 
-        # Force-close (EXIT, on the LEG): close when the leg FORCE-CLOSE score is far enough AGAINST.
-        # Suppressed during the post-entry min-hold (exit_allowed) so we never open-then-close.
-        buy_fc = exit_allowed and (fc_leg <= -FORCE_CLOSE_S)
-        sell_fc = exit_allowed and (fc_leg >= FORCE_CLOSE_S)
+        # Force-close (EXIT, on the LEG): close only when BOTH the leg's M15 slopes reverse AGAINST
+        # the basket (fc_leg beyond ∓FORCE_CLOSE_S, now ±2) AND the loss is past the floor
+        # (FC_MIN_LOSS_PER_UNIT × units) — so a shallow dip isn't booked as a tiny churn loss. The
+        # profit-book exit below is unchanged. Set the floor to 0 to stop on the both-slopes signal
+        # alone. Suppressed during the post-entry min-hold (exit_allowed) so we never open-then-close.
+        fc_loss_floor = FC_MIN_LOSS_PER_UNIT * (times or 1)
+        buy_loss_ok = (fc_loss_floor <= 0) or (buy_profit <= -fc_loss_floor)
+        sell_loss_ok = (fc_loss_floor <= 0) or (sell_profit <= -fc_loss_floor)
+        buy_fc = exit_allowed and (fc_leg <= -FORCE_CLOSE_S) and buy_loss_ok
+        sell_fc = exit_allowed and (fc_leg >= FORCE_CLOSE_S) and sell_loss_ok
 
         # Profit-book (variant A, on the LEG): once profit clears the tax-aware floor AND the leg
         # BOOK score reverses. Checked BEFORE the force-close. Also min-hold gated.
