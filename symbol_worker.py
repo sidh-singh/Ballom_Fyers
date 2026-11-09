@@ -27,7 +27,7 @@ import threading
 from time import monotonic
 
 from constants import (
-    MARKET_HOURS, WORKER_IDLE_SLEEP, now_ist,
+    MARKET_HOURS, WORKER_IDLE_SLEEP, now_ist, today_ist,
     RSI_LENGTH, RSI_MA_TYPE, RSI_CANDLE_COUNT,
     RSI_DCA_LADDER_TIMEFRAMES, TIMEFRAME_TO_FYERS_RES,
     MACD_FAST, MACD_SLOW, MACD_SIGNAL,
@@ -41,6 +41,7 @@ from indicator import Indicator
 from strategy import Strategy, Signal
 from fyers_api import FyersAPI
 import scanner
+import auto_tune
 from state_writer import log_strategy_event, write_signal_state, write_ohlc_state, backfill_ohlc_state
 
 logger = logging.getLogger("worker")
@@ -65,7 +66,11 @@ class SymbolWorker(threading.Thread):
         self.step_up = cfg.get("step_up_balance", STEP_UP_BALANCE)
         self.max_limit = cfg.get("unit_max_limit", UNIT_MAX_LIMIT)
         self.root = cfg.get("root", self.symbol)                 # commodity root (GOLD/SILVER)
-        self.hedge_per_unit = cfg.get("hedge_per_unit", HEDGE_PER_UNIT)
+        # ₹ profit target per unit. The symbols.json value is the BASE/floor; the daily auto-tuner
+        # (auto_tune.py, hedging) hill-climbs it up to CAP and persists — load the tuned value here.
+        self._base_hedge_per_unit = cfg.get("hedge_per_unit", HEDGE_PER_UNIT)
+        self.hedge_per_unit = auto_tune.current_amount(self.symbol, self._base_hedge_per_unit)
+        self._tuned_date = None                                  # last date the auto-tuner ran
         self._active_underlying = self.underlying                # resolved per tick for commodity
         self._session = None                                     # (open, close) from MCX CSV
         self.ctx = ctx
@@ -121,6 +126,7 @@ class SymbolWorker(threading.Thread):
             if self.active:
                 return
 
+        self._maybe_auto_tune()                  # ~5 min before close: hill-climb the ₹ target (daily)
         buy_pos, sell_pos, close_threshold, count = self._leg_state_and_threshold()
         _idx_rsi, slopes, rsi_graphs, macd_graphs = self._slopes_and_rsi()          # INDEX: OPEN entry + add-gate
         leg_slopes, leg_rsi_mtf, leg_rsi_graphs, leg_macd_graphs, leg_slopes_raw = self._leg_slopes()  # LEG: ladder RSI + fc/book
@@ -268,6 +274,23 @@ class SymbolWorker(threading.Thread):
             logger.debug("[%s] off-hours ohlc persist failed: %s", self.symbol, e)
 
     # ── leg state → strategy inputs (cost-basis P&L) ────────────────────────
+    def _maybe_auto_tune(self):
+        """Once per trading day, ~5 min before THIS asset's session close, hill-climb the ₹ profit
+        target from the day's win-ratio + net ₹ and auto-apply it (auto_tune.maybe_tune). Idempotent
+        per day via ``_tuned_date``; only fires inside the pre-close window while the market is live."""
+        today = today_ist().isoformat()
+        if self._tuned_date == today:
+            return
+        close_t = MARKET_HOURS.get(self.asset_type, MARKET_HOURS["INDEX"])["close"]
+        now = now_ist()
+        close_dt = now.replace(hour=close_t.hour, minute=close_t.minute, second=0, microsecond=0)
+        if now < close_dt - timedelta(minutes=5):
+            return
+        self.hedge_per_unit = auto_tune.maybe_tune(self.symbol, self._base_hedge_per_unit, today)
+        self._tuned_date = today
+        log_strategy_event(self.symbol, (self.active or {}).get("side", ""), "AUTO_TUNE",
+                           details=f"target->Rs{self.hedge_per_unit:.0f} (base Rs{self._base_hedge_per_unit:.0f})")
+
     def _leg_state_and_threshold(self):
         if self.active is None:
             bal = self.ctx.api.get_balance()
