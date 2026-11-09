@@ -686,14 +686,14 @@ def symbol_panel(symbol, s, closes, oh=None, events=None, show_avg=False,
 # ── compact RSI+MACD slope readout (arrows, no mini-charts) ──────────────────
 def _compact_slopes(s):
     """Small text/arrow readout of the RSI + MACD pivot-slope SIGN per timeframe — green ▲ /
-    red ▼ / grey –, for the INDEX (entry) and the active CE/PE leg (ladder / force-close).
+    red ▼ / grey –, as THREE separate rows: the INDEX, the CE leg, and the PE leg.
     Replaces the bulky per-TF mini-chart grids in the primary view."""
     def arr(x): return "▲" if x > 0 else ("▼" if x < 0 else "–")
     def col(x): return C["green"] if x > 0 else (C["red"] if x < 0 else C["muted"])
 
-    def cell(tf, rg, mg):
-        r = (rg.get(tf) or {}).get("sign", 0) or 0
-        m = (mg.get(tf) or {}).get("sign", 0) or 0
+    def cell(tf, d):
+        r = (d.get(tf) or {}).get("rsi", 0) or 0
+        m = (d.get(tf) or {}).get("macd", 0) or 0
         return html.Div([
             html.Div(tf, style={"fontSize": "10px", "color": C["muted"], "textAlign": "center"}),
             html.Div([
@@ -704,30 +704,25 @@ def _compact_slopes(s):
         ], style={"padding": "3px 8px", "borderRadius": "7px", "background": "rgba(255,255,255,0.03)",
                   "border": f"1px solid {C['border']}", "textAlign": "center", "minWidth": "58px"})
 
-    def strip(label, lab_col, rg, mg):
-        rg, mg = rg or {}, mg or {}
-        tfs = [tf for tf in SLOPE_TF_ORDER if tf in rg or tf in mg]
+    def strip(label, lab_col, d):
+        d = d or {}
+        tfs = [tf for tf in SLOPE_TF_ORDER if tf in d]
         if not tfs:
-            return None
+            return html.Div([
+                html.Span(label, style={"color": lab_col, "fontWeight": "800", "fontSize": "12px",
+                          "width": "46px", "display": "inline-block"}),
+                html.Span("—", style={"color": C["muted"], "fontSize": "11px"}),
+            ], style={"display": "flex", "alignItems": "center", "gap": "8px", "margin": "4px 0"})
         return html.Div([
             html.Span(label, style={"color": lab_col, "fontWeight": "800", "fontSize": "12px",
                       "width": "46px", "display": "inline-block"}),
-            html.Div([cell(tf, rg, mg) for tf in tfs],
+            html.Div([cell(tf, d) for tf in tfs],
                      style={"display": "flex", "gap": "6px", "flexWrap": "wrap"}),
         ], style={"display": "flex", "alignItems": "center", "gap": "8px", "margin": "4px 0"})
 
-    rows = []
-    idx = strip("Index", C["blue"], s.get("rsi_graphs"), s.get("macd_graphs"))
-    if idx:
-        rows.append(idx)
-    side = (s.get("position") or {}).get("side") or "Leg"
-    leg = strip(side, C["green"] if side == "CE" else (C["red"] if side == "PE" else C["dim"]),
-                s.get("leg_rsi_graphs"), s.get("leg_macd_graphs"))
-    if leg:
-        rows.append(leg)
-    if not rows:
-        return html.Div("no live slopes yet (open a position to see the leg's)",
-                        style={"color": C["muted"], "fontSize": "11px", "padding": "6px 2px"})
+    rows = [strip("Index", C["blue"], s.get("slopes")),
+            strip("CE", C["green"], s.get("ce_slopes")),
+            strip("PE", C["red"], s.get("pe_slopes"))]
     return html.Div([html.Span("R = RSI slope · M = MACD slope",
                      style={"color": C["muted"], "fontSize": "9.5px"})] + rows)
 
