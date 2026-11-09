@@ -247,7 +247,7 @@ def api_panel():
             html.Div(f"{pct}%  ·  {sec.get('used',0)}/{sec.get('limit',sec_lim)}·s  "
                      f"{mn.get('used',0)}/{mn.get('limit',min_lim)}·m",
                      style={"color": C["muted"], "fontSize": "10.5px", "marginTop": "5px"}),
-        ], pad="13px 15px", extra={"flex": "1"}))
+        ], pad="13px 15px", extra={"flex": "1 1 150px"}))
     renew = acct.get("prime_renewal_days")
     plan_col = C["amber"] if plan == "PRIME" else C["grey"]
     header_bits = [
@@ -261,7 +261,7 @@ def api_panel():
             "color": C["red"] if rv <= 7 else C["dim"], "fontSize": "11px", "marginLeft": "10px"}))
     return html.Div([
         html.Div(header_bits, style={"margin": "2px 2px 9px", "display": "flex", "alignItems": "center"}),
-        html.Div(cards, style={"display": "flex", "gap": "12px"}),
+        html.Div(cards, style={"display": "flex", "gap": "12px", "flexWrap": "wrap"}),
     ])
 
 
@@ -544,11 +544,11 @@ def symbol_panel(symbol, s, closes, oh=None, events=None, show_avg=False,
                 html.Span(s.get("asset_type", ""), style={"color": C["muted"], "fontSize": "11px",
                           "marginLeft": "8px"}),
                 html.Span(_chip(f"HISTORICAL {view_label}", C["amber"]), style={"marginLeft": "12px"}),
-            ], style={"display": "flex", "alignItems": "center", "marginBottom": "10px"}),
+            ], style={"display": "flex", "alignItems": "center", "marginBottom": "10px", "flexWrap": "wrap", "rowGap": "6px"}),
             html.Div("Live signals (RSI / SHA / position / ladder) are shown for Today only. "
                      "The booked P&L and price chart below are for the selected date.",
                      style={"color": C["muted"], "fontSize": "12px", "lineHeight": "1.5"}),
-        ], extra={"flex": "1.1"})
+        ], extra={"flex": "1.1 1 300px", "minWidth": "0"})
     else:
         sig = s.get("signal", "DO_NOTHING")
         rsi_blocked = s.get("rsi_blocked")
@@ -566,7 +566,7 @@ def symbol_panel(symbol, s, closes, oh=None, events=None, show_avg=False,
                         style={"marginLeft": "10px", "background": C["red"], "color": "#fff",
                                "border": "none", "borderRadius": "5px", "padding": "4px 10px",
                                "fontSize": "11px", "fontWeight": "700", "cursor": "pointer"}),
-        ], style={"display": "flex", "alignItems": "center", "marginBottom": "10px"})
+        ], style={"display": "flex", "alignItems": "center", "marginBottom": "10px", "flexWrap": "wrap", "rowGap": "6px"})
         pos = s.get("position")
         ladder = s.get("ladder")
         rsi = s.get("rsi", {})
@@ -584,7 +584,7 @@ def symbol_panel(symbol, s, closes, oh=None, events=None, show_avg=False,
             left_kids.append(_profit_meter(pos.get("cycle_pl"), pos.get("target")))
         left_kids.append(_rsi_ladder_block(rsi, ladder))
         left_kids.append(_position_block(pos))
-        left = _card(left_kids, extra={"flex": "1.1"})
+        left = _card(left_kids, extra={"flex": "1.1 1 300px", "minWidth": "0"})
     g = sum(float(r.get("effective_pl", 0)) for r in closes)
     tx = sum(float(r.get("charges", 0)) for r in closes)
     n = round(sum(float(r.get("net_pl", r.get("effective_pl", 0))) for r in closes), 2)
@@ -595,8 +595,8 @@ def symbol_panel(symbol, s, closes, oh=None, events=None, show_avg=False,
         html.Span(f"net ₹{n:,.2f}", style={"color": _pl_color(n), "fontSize": "13px",
                   "fontWeight": "800", "marginLeft": "10px"}),
     ], style={"padding": "4px 10px 2px"})
-    right = _card([booked_line, booking_chart(symbol, closes)], pad="8px", extra={"flex": "1.4"})
-    info_row = html.Div([left, right], style={"display": "flex", "gap": "14px"})
+    right = _card([booked_line, booking_chart(symbol, closes)], pad="8px", extra={"flex": "1.4 1 340px", "minWidth": "0"})
+    info_row = html.Div([left, right], style={"display": "flex", "gap": "14px", "flexWrap": "wrap"})
     price_card = _card([ohlc_chart(symbol, oh, events or [], show_avg)], pad="6px 8px",
                        extra={"marginTop": "12px"})
     return html.Div([info_row, price_card], style={"marginBottom": "18px"})
@@ -639,7 +639,7 @@ def booking_chart(asset, closes):
                                  fillcolor="rgba(239,68,68,0.15)", showlegend=False,
                                  hoverinfo="skip"), row=2, col=1)
     fig.add_hline(y=0, line_dash="dot", line_color=C["muted"], opacity=0.5, row=2, col=1)
-    fig.update_layout(height=300, margin=dict(l=42, r=14, t=26, b=22),
+    fig.update_layout(height=300, autosize=True, margin=dict(l=42, r=14, t=26, b=22),
                       paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
                       font=dict(color=C["dim"], size=10), bargap=0.35)
     for i in (1, 2):
@@ -648,7 +648,7 @@ def booking_chart(asset, closes):
                          zerolinecolor=C["muted"], row=i, col=1, tickfont=dict(size=9, color=C["muted"]))
     for ann in fig["layout"]["annotations"]:
         ann["font"] = dict(size=11, color=C["dim"])
-    return dcc.Graph(figure=fig, config={"displayModeBar": False})
+    return dcc.Graph(figure=fig, config={"displayModeBar": False, "responsive": True}, style={"width": "100%"})
 
 
 # ── index price chart with EVERY trade today marked (live + closed) ──────────
@@ -765,7 +765,7 @@ def ohlc_chart(symbol, oh, events, show_avg):
                 hoverinfo="skip", showlegend=False))
 
     ntr = sum(1 for cyc in cycles if cyc["entries"])
-    fig.update_layout(height=460, margin=dict(l=54, r=18, t=30, b=28),
+    fig.update_layout(height=460, autosize=True, margin=dict(l=54, r=18, t=30, b=28),
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         font=dict(color=C["dim"], size=10), hovermode="closest", showlegend=False,
         title=dict(text=f"{symbol} index  -  today - 5-min - {ntr} trade(s)",
@@ -775,7 +775,7 @@ def ohlc_chart(symbol, oh, events, show_avg):
                      tickfont=dict(size=8, color=C["muted"]), nticks=16)
     fig.update_yaxes(showgrid=True, gridcolor=C["grid"], tickfont=dict(size=9, color=C["muted"]),
                      title=dict(text=ylab, font=dict(size=9, color=C["muted"])))
-    return dcc.Graph(figure=fig, config={"displayModeBar": False}, style={"width": "100%"})
+    return dcc.Graph(figure=fig, config={"displayModeBar": False, "responsive": True}, style={"width": "100%"})
 
 
 # ── status + log ─────────────────────────────────────────────────────────────
@@ -820,7 +820,8 @@ def log_table(view_date=None):
     return _card([
         html.Div("STRATEGY LOG", style={"color": C["dim"], "fontSize": "12px",
                  "margin": "0 0 8px", "letterSpacing": "0.6px"}),
-        html.Table(rows, style={"width": "100%", "borderCollapse": "collapse"})
+        html.Div(html.Table(rows, style={"width": "100%", "borderCollapse": "collapse"}),
+                 style={"overflowX": "auto"})
         if rows else html.Div(f"No events for {view}.", style={"color": C["muted"]}),
     ])
 
@@ -871,7 +872,7 @@ def api_limits_panel():
             html.Span(f"{dpct}%", style={"color": dcol, "fontSize": "11px", "fontWeight": "700",
                                          "marginRight": "10px"}),
             html.Span(status, style={"marginLeft": "auto"}),
-        ], style={"display": "flex", "alignItems": "center", "padding": "7px 4px",
+        ], style={"display": "flex", "flexWrap": "wrap", "rowGap": "4px", "alignItems": "center", "padding": "7px 4px",
                   "borderBottom": f"1px solid {C['border']}"}))
 
     title = html.Div([
@@ -888,7 +889,9 @@ def api_limits_panel():
 
 
 # ── app ──────────────────────────────────────────────────────────────────────
-app = dash.Dash(__name__, title="fyers dashboard")
+app = dash.Dash(__name__, title="fyers dashboard",
+                meta_tags=[{"name": "viewport",
+                            "content": "width=device-width, initial-scale=1"}])
 app.layout = html.Div([
     dcc.Interval(id="tick", interval=REFRESH_MS, n_intervals=0),
     html.Div([
