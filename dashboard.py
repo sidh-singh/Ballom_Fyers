@@ -597,72 +597,143 @@ def _position_block(pos):
 
 def symbol_panel(symbol, s, closes, oh=None, events=None, show_avg=False,
                  historical=False, view_label="today"):
-    if historical:
-        # past day: live slopes/RSI/position are "now" only — show the symbol + a note instead.
-        left = _card([
-            html.Div([
-                html.Span(symbol, style={"color": C["text"], "fontSize": "18px", "fontWeight": "800"}),
-                html.Span(s.get("asset_type", ""), style={"color": C["muted"], "fontSize": "11px",
-                          "marginLeft": "8px"}),
-                html.Span(_chip(f"HISTORICAL {view_label}", C["amber"]), style={"marginLeft": "12px"}),
-            ], style={"display": "flex", "alignItems": "center", "marginBottom": "10px", "flexWrap": "wrap", "rowGap": "6px"}),
-            html.Div("Live signals (slopes / RSI / position) are shown for Today only. "
-                     "The booked P&L and price chart below are for the selected date.",
-                     style={"color": C["muted"], "fontSize": "12px", "lineHeight": "1.5"}),
-        ], extra={"flex": "1.1 1 300px", "minWidth": "0"})
-    else:
-        sig = s.get("signal", "DO_NOTHING")
-        variant = (s.get("variant") or "").upper()
-        head = html.Div([
-            html.Span(symbol, style={"color": C["text"], "fontSize": "18px", "fontWeight": "800"}),
-            html.Span(s.get("asset_type", ""), style={"color": C["muted"], "fontSize": "11px",
-                      "marginLeft": "8px"}),
-            html.Span(_chip(sig, _sig_color(sig)), style={"marginLeft": "12px"}),
-            html.Span(_chip(variant, C["teal"]) if variant else "", style={"marginLeft": "8px"}),
-            html.Span(f"units {s.get('units','-')}", style={"color": C["dim"], "fontSize": "12px",
-                      "marginLeft": "auto"}),
-            html.Button("⏹ Force close", id={"type": "force-close", "symbol": symbol}, n_clicks=0,
-                        title=f"Close ALL open {symbol} positions now",
-                        style={"marginLeft": "10px", "background": C["red"], "color": "#fff",
-                               "border": "none", "borderRadius": "5px", "padding": "4px 10px",
-                               "fontSize": "11px", "fontWeight": "700", "cursor": "pointer"}),
-        ], style={"display": "flex", "alignItems": "center", "marginBottom": "10px", "flexWrap": "wrap", "rowGap": "6px"})
-        left = _card([
-            head,
-            _pair_block(s.get("pair")),
-            html.Div(style={"height": "10px"}),
-            _slope_block(s),
-            _rsi_block(s.get("rsi", {})),
-            _position_block(s.get("position")),
-        ], extra={"flex": "1.1 1 300px", "minWidth": "0"})
+    # ── booked totals (shared) ──
     g = sum(float(r.get("effective_pl", 0)) for r in closes)
     tx = sum(float(r.get("charges", 0)) for r in closes)
     n = round(sum(float(r.get("net_pl", r.get("effective_pl", 0))) for r in closes), 2)
-    booked_line = html.Div([
-        html.Span(f"{len(closes)} closes", style={"color": C["dim"], "fontSize": "11px"}),
-        html.Span(f"gross ₹{g:,.0f}", style={"color": C["dim"], "fontSize": "11px", "marginLeft": "10px"}),
-        html.Span(f"tax ₹{tx:,.0f}", style={"color": C["purple"], "fontSize": "11px", "marginLeft": "10px"}),
-        html.Span(f"net ₹{n:,.2f}", style={"color": _pl_color(n), "fontSize": "13px",
-                  "fontWeight": "800", "marginLeft": "10px"}),
-    ], style={"padding": "4px 10px 2px"})
-    right = _card([booked_line, booking_chart(symbol, closes)], pad="8px", extra={"flex": "1.4 1 340px", "minWidth": "0"})
-    top = html.Div([left, right], style={"display": "flex", "gap": "14px", "marginBottom": "10px", "flexWrap": "wrap"})
-    grids = []
-    if not historical:   # live pivot-slope grids are today-only
-        grids.append(_pivot_grid(s.get("rsi_graphs"), s.get("macd_graphs"),
-                     "INDEX pivot slopes (entry)  ·  peak → now, per timeframe"))
-        leg_rg, leg_mg = s.get("leg_rsi_graphs"), s.get("leg_macd_graphs")
-        if leg_rg or leg_mg:
-            side = (s.get("position") or {}).get("side", "")
-            grids.append(_pivot_grid(leg_rg, leg_mg,
-                         f"LEG {side} pivot slopes (book / force-close)  ·  the option's own chart"))
+    _title = lambda t: html.Div(t, style={"color": C["dim"], "fontSize": "11px", "fontWeight": "700",
+                                           "letterSpacing": "0.3px", "margin": "0 0 4px"})
     price_card = _card([ohlc_chart(symbol, oh, events or [], show_avg)], pad="6px 8px",
-                       extra={"marginBottom": "10px"})
-    return html.Div([top, price_card] + grids, style={"marginBottom": "16px"})
+                       extra={"marginBottom": "10px"})            # OHLC = the PRIMARY chart (top)
+
+    if historical:
+        header = html.Div([
+            html.Span(symbol, style={"color": C["text"], "fontSize": "18px", "fontWeight": "800"}),
+            html.Span(s.get("asset_type", ""), style={"color": C["muted"], "fontSize": "11px", "marginLeft": "8px"}),
+            html.Span(_chip(f"HISTORICAL {view_label}", C["amber"]), style={"marginLeft": "12px"}),
+            html.Span(f"net ₹{n:,.2f}", style={"color": _pl_color(n), "fontSize": "14px",
+                      "fontWeight": "800", "marginLeft": "auto"}),
+        ], style={"display": "flex", "alignItems": "center", "marginBottom": "8px", "flexWrap": "wrap", "rowGap": "6px"})
+        profit_card = _card([_title(f"Profit per position — {view_label} (net, after tax)"),
+                             per_position_chart(symbol, closes)], pad="8px")
+        analysis = html.Details([
+            html.Summary("▸ Cumulative P/L", style={"cursor": "pointer", "color": C["dim"],
+                         "fontSize": "12px", "fontWeight": "700", "padding": "6px 2px"}),
+            _card([_title("Cumulative net & drawdown"), cumulative_chart(symbol, closes)], pad="8px",
+                  extra={"marginTop": "6px"}),
+        ])
+        return html.Div([header, price_card, profit_card, analysis],
+                        style={"marginBottom": "18px", "borderBottom": f"1px solid {C['border']}",
+                               "paddingBottom": "12px"})
+
+    # ── live view ──
+    sig = s.get("signal", "DO_NOTHING")
+    variant = (s.get("variant") or "").upper()
+    pos = s.get("position")
+    if pos:
+        pos_chip = _chip(f"IN {pos.get('side')} · L{pos.get('mg', 0)} · ₹{float(pos.get('cycle_pl', 0) or 0):,.0f}",
+                         C["green"] if pos.get("side") == "CE" else C["red"])
+    else:
+        pos_chip = _chip("FLAT", C["grey"])
+    header = html.Div([
+        html.Span(symbol, style={"color": C["text"], "fontSize": "18px", "fontWeight": "800"}),
+        html.Span(s.get("asset_type", ""), style={"color": C["muted"], "fontSize": "11px", "marginLeft": "8px"}),
+        html.Span(_chip(sig, _sig_color(sig)), style={"marginLeft": "10px"}),
+        html.Span(_chip(variant, C["teal"]) if variant else "", style={"marginLeft": "6px"}),
+        html.Span(pos_chip, style={"marginLeft": "6px"}),
+        html.Span(f"units {s.get('units', '-')}", style={"color": C["dim"], "fontSize": "12px", "marginLeft": "auto"}),
+        html.Span(f"net ₹{n:,.0f}", style={"color": _pl_color(n), "fontSize": "13px", "fontWeight": "800",
+                  "marginLeft": "10px"}),
+        html.Button("⏹ Force close", id={"type": "force-close", "symbol": symbol}, n_clicks=0,
+                    title=f"Close ALL open {symbol} positions now",
+                    style={"marginLeft": "10px", "background": C["red"], "color": "#fff", "border": "none",
+                           "borderRadius": "5px", "padding": "4px 10px", "fontSize": "11px",
+                           "fontWeight": "700", "cursor": "pointer"}),
+    ], style={"display": "flex", "alignItems": "center", "marginBottom": "8px", "flexWrap": "wrap", "rowGap": "6px"})
+
+    # below the OHLC: compact RSI+MACD slopes  |  per-position profit
+    mid = html.Div([
+        _card([_title("RSI + MACD slopes (index + active leg)"), _compact_slopes(s)],
+              pad="10px 14px", extra={"flex": "1 1 320px", "minWidth": "0"}),
+        _card([_title("Profit per position (net, after tax)"), per_position_chart(symbol, closes)],
+              pad="8px", extra={"flex": "1.25 1 360px", "minWidth": "0"}),
+    ], style={"display": "flex", "gap": "12px", "flexWrap": "wrap", "marginBottom": "10px"})
+
+    # ANALYSIS (collapsed by default — pair, entry meters, RSI, full pivot charts, cumulative P/L)
+    grids = [_pivot_grid(s.get("rsi_graphs"), s.get("macd_graphs"), "INDEX pivot slopes (entry)")]
+    leg_rg, leg_mg = s.get("leg_rsi_graphs"), s.get("leg_macd_graphs")
+    if leg_rg or leg_mg:
+        grids.append(_pivot_grid(leg_rg, leg_mg,
+                     f"LEG {(pos or {}).get('side','')} pivot slopes (ladder / force-close)"))
+    analysis = html.Details([
+        html.Summary("▸ Analysis — pair · entry meters · RSI · full RSI/MACD pivots · cumulative P/L",
+                     style={"cursor": "pointer", "color": C["dim"], "fontSize": "12px",
+                            "fontWeight": "700", "padding": "6px 2px"}),
+        _pair_block(s.get("pair")),
+        html.Div(style={"height": "8px"}),
+        _slope_block(s),
+        _rsi_block(s.get("rsi", {})),
+    ] + grids + [
+        _card([_title("Cumulative net & drawdown"), cumulative_chart(symbol, closes)], pad="8px",
+              extra={"marginTop": "6px"}),
+    ], style={"marginTop": "4px"})
+
+    return html.Div([header, price_card, mid, analysis],
+                    style={"marginBottom": "18px", "borderBottom": f"1px solid {C['border']}",
+                           "paddingBottom": "12px"})
 
 
-# ── per-asset P/L booking chart ──────────────────────────────────────────────
-def booking_chart(asset, closes):
+# ── compact RSI+MACD slope readout (arrows, no mini-charts) ──────────────────
+def _compact_slopes(s):
+    """Small text/arrow readout of the RSI + MACD pivot-slope SIGN per timeframe — green ▲ /
+    red ▼ / grey –, for the INDEX (entry) and the active CE/PE leg (ladder / force-close).
+    Replaces the bulky per-TF mini-chart grids in the primary view."""
+    def arr(x): return "▲" if x > 0 else ("▼" if x < 0 else "–")
+    def col(x): return C["green"] if x > 0 else (C["red"] if x < 0 else C["muted"])
+
+    def cell(tf, rg, mg):
+        r = (rg.get(tf) or {}).get("sign", 0) or 0
+        m = (mg.get(tf) or {}).get("sign", 0) or 0
+        return html.Div([
+            html.Div(tf, style={"fontSize": "10px", "color": C["muted"], "textAlign": "center"}),
+            html.Div([
+                html.Span(f"R{arr(r)}", style={"color": col(r), "fontWeight": "800", "fontSize": "12px"}),
+                html.Span(f" M{arr(m)}", style={"color": col(m), "fontWeight": "800", "fontSize": "12px",
+                          "marginLeft": "4px"}),
+            ]),
+        ], style={"padding": "3px 8px", "borderRadius": "7px", "background": "rgba(255,255,255,0.03)",
+                  "border": f"1px solid {C['border']}", "textAlign": "center", "minWidth": "58px"})
+
+    def strip(label, lab_col, rg, mg):
+        rg, mg = rg or {}, mg or {}
+        tfs = [tf for tf in SLOPE_TF_ORDER if tf in rg or tf in mg]
+        if not tfs:
+            return None
+        return html.Div([
+            html.Span(label, style={"color": lab_col, "fontWeight": "800", "fontSize": "12px",
+                      "width": "46px", "display": "inline-block"}),
+            html.Div([cell(tf, rg, mg) for tf in tfs],
+                     style={"display": "flex", "gap": "6px", "flexWrap": "wrap"}),
+        ], style={"display": "flex", "alignItems": "center", "gap": "8px", "margin": "4px 0"})
+
+    rows = []
+    idx = strip("Index", C["blue"], s.get("rsi_graphs"), s.get("macd_graphs"))
+    if idx:
+        rows.append(idx)
+    side = (s.get("position") or {}).get("side") or "Leg"
+    leg = strip(side, C["green"] if side == "CE" else (C["red"] if side == "PE" else C["dim"]),
+                s.get("leg_rsi_graphs"), s.get("leg_macd_graphs"))
+    if leg:
+        rows.append(leg)
+    if not rows:
+        return html.Div("no live slopes yet (open a position to see the leg's)",
+                        style={"color": C["muted"], "fontSize": "11px", "padding": "6px 2px"})
+    return html.Div([html.Span("R = RSI slope · M = MACD slope",
+                     style={"color": C["muted"], "fontSize": "9.5px"})] + rows)
+
+
+# ── booking series + the two split P/L charts ────────────────────────────────
+def _booking_series(closes):
     closes = sorted(closes, key=lambda r: r.get("timestamp", ""))
     labels, profits, colors, cum, peaks, hover = [], [], [], [], [], []
     c = peak = 0.0
@@ -677,36 +748,50 @@ def booking_chart(asset, closes):
         c += p; cum.append(round(c, 2)); peak = max(peak, c); peaks.append(round(peak, 2))
         hover.append(f"{t}<br>Gross ₹{gross:.2f}<br>Tax ₹{tax:.2f}<br>"
                      f"<b>Net ₹{p:.2f}</b><br>Cum net ₹{c:.2f}<br>Peak ₹{peak:.2f}<br>DD ₹{peak-c:.2f}")
-    fig = make_subplots(rows=2, cols=1, row_heights=[0.5, 0.5], vertical_spacing=0.18,
-                        subplot_titles=[f"{asset} — net P/L per booking (after tax)",
-                                        "Cumulative net & drawdown"])
+    return labels, profits, colors, cum, peaks, hover
+
+
+def per_position_chart(asset, closes):
+    """SIMPLE 'each position & what it earned, when': one coloured bar per closed cycle (net ₹
+    after tax), labelled with the amount, time on the x-axis. Replaces the bulky 2-row chart."""
+    labels, profits, colors, cum, peaks, hover = _booking_series(closes)
+    fig = go.Figure()
     if closes:
         fig.add_trace(go.Bar(x=labels, y=profits, marker=dict(color=colors),
-                             hovertext=hover, hoverinfo="text", showlegend=False), row=1, col=1)
-        cc = C["green"] if c >= 0 else C["red"]
+                             text=[f"₹{p:,.0f}" for p in profits], textposition="outside",
+                             textfont=dict(size=9, color=C["dim"]), cliponaxis=False,
+                             hovertext=hover, hoverinfo="text", showlegend=False))
+    fig.add_hline(y=0, line_dash="dot", line_color=C["muted"], opacity=0.5)
+    fig.update_layout(height=190, autosize=True, margin=dict(l=40, r=12, t=14, b=20),
+                      paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                      font=dict(color=C["dim"], size=10), bargap=0.45)
+    fig.update_xaxes(showgrid=False, tickfont=dict(size=8, color=C["muted"]))
+    fig.update_yaxes(showgrid=True, gridcolor=C["grid"], zeroline=True,
+                     zerolinecolor=C["muted"], tickfont=dict(size=9, color=C["muted"]))
+    return dcc.Graph(figure=fig, config={"displayModeBar": False, "responsive": True}, style={"width": "100%"})
+
+
+def cumulative_chart(asset, closes):
+    """Cumulative net P/L + peak/drawdown line — moved to the (collapsed) Analysis section."""
+    labels, profits, colors, cum, peaks, hover = _booking_series(closes)
+    fig = go.Figure()
+    if closes:
+        cc = C["green"] if (cum[-1] if cum else 0) >= 0 else C["red"]
+        fig.add_trace(go.Scatter(x=labels, y=peaks, mode="lines",
+                                 line=dict(color=C["amber"], width=1.2, dash="dot"),
+                                 name="peak", showlegend=False, hoverinfo="skip"))
         fig.add_trace(go.Scatter(x=labels, y=cum, mode="lines+markers",
                                  line=dict(color=cc, width=2, shape="spline"),
-                                 marker=dict(size=6, color=cc, line=dict(width=1, color=C["bg"])),
+                                 marker=dict(size=5, color=cc, line=dict(width=1, color=C["bg"])),
                                  fill="tozeroy", fillcolor="rgba(124,58,237,0.06)",
-                                 showlegend=False, hoverinfo="skip"), row=2, col=1)
-        fig.add_trace(go.Scatter(x=labels, y=peaks, mode="lines",
-                                 line=dict(color=C["amber"], width=1.3, dash="dot"),
-                                 showlegend=False, hoverinfo="skip"), row=2, col=1)
-        fig.add_trace(go.Scatter(x=labels, y=peaks, mode="lines", line=dict(width=0),
-                                 showlegend=False, hoverinfo="skip"), row=2, col=1)
-        fig.add_trace(go.Scatter(x=labels, y=cum, mode="lines", line=dict(width=0), fill="tonexty",
-                                 fillcolor="rgba(239,68,68,0.15)", showlegend=False,
-                                 hoverinfo="skip"), row=2, col=1)
-    fig.add_hline(y=0, line_dash="dot", line_color=C["muted"], opacity=0.5, row=2, col=1)
-    fig.update_layout(height=300, autosize=True, margin=dict(l=42, r=14, t=26, b=22),
+                                 name="cum net", showlegend=False, hoverinfo="skip"))
+    fig.add_hline(y=0, line_dash="dot", line_color=C["muted"], opacity=0.5)
+    fig.update_layout(height=170, autosize=True, margin=dict(l=40, r=12, t=10, b=20),
                       paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                      font=dict(color=C["dim"], size=10), bargap=0.35)
-    for i in (1, 2):
-        fig.update_xaxes(showgrid=False, row=i, col=1, tickfont=dict(size=8, color=C["muted"]))
-        fig.update_yaxes(showgrid=True, gridcolor=C["grid"], zeroline=True,
-                         zerolinecolor=C["muted"], row=i, col=1, tickfont=dict(size=9, color=C["muted"]))
-    for ann in fig["layout"]["annotations"]:
-        ann["font"] = dict(size=11, color=C["dim"])
+                      font=dict(color=C["dim"], size=10))
+    fig.update_xaxes(showgrid=False, tickfont=dict(size=8, color=C["muted"]))
+    fig.update_yaxes(showgrid=True, gridcolor=C["grid"], zeroline=True,
+                     zerolinecolor=C["muted"], tickfont=dict(size=9, color=C["muted"]))
     return dcc.Graph(figure=fig, config={"displayModeBar": False, "responsive": True}, style={"width": "100%"})
 
 
