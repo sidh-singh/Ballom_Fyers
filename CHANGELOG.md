@@ -1,5 +1,15 @@
 # CHANGELOG — `fyers_live` / `fyers_demo`
 
+## 2026-11-10 — Docs: TRADING_LOGIC.md refreshed to the current strategy
+
+Brought `TRADING_LOGIC.md` up to date — it had drifted to the 2026-11-04 logic. It now documents the
+**unified CE/PE model** (both long options; P&L long-only), the **`_decisive` + leg→index(polarity)
+fallback chains**, the **multi-TF trend-reversal force-close** (no M5 hair-trigger; hold when all-grey),
+the **H4→H1 entry + H4/M5 confirm** chains, the **leg-RSI DCA ladder** (CE & PE both add on oversold),
+the booking rule, exchange-aware charges (NSE STT / MCX CTT), and — hedging only — the **daily ₹-target
+auto-tuner** (§6). Docs-only, no code change. (`DASHBOARD.md` is access/theme/security only and is
+already current; `README.md`/`ARCHITECTURE.md` are high-level.)
+
 ## 2026-11-10 — Auto-tuner: daily hill-climb of the hedging ₹ target + dashboard chart
 
 New `auto_tune.py` adaptively **"trains" the hedging ₹ profit target** (`hedge_per_unit`) per symbol.
