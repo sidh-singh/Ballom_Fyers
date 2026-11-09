@@ -227,9 +227,9 @@ class Strategy:
         open_wants = 'BUY' if open_score >= ENTRY_S else ('SELL' if open_score <= -ENTRY_S else None)
         entry_chop_block = bool(open_wants and entry_direction is None)
 
-        # NEW fresh-entry gate (owner): INDEX H4 both-directional + the CANDIDATE option leg's OWN
-        # H4 and M5 both +ve, and the leg's M15 (force-close TF) not already reversing — never open
-        # into an immediate force-close (anti-vibration). This replaces the index-only fresh entry.
+        # Fresh-entry gate (owner): INDEX H4 both-directional + the CANDIDATE option leg's OWN H4 and
+        # M5 both +ve. (The leg-M15 anti-vibration guard was removed — the force-close now reads the
+        # index multi-TF score, not the leg's M15.)
         def _both_pos(sl, tf):
             v = (sl or {}).get(tf, {})
             return ((v.get('rsi') or {}).get('sign', 0) > 0) and ((v.get('macd') or {}).get('sign', 0) > 0)
@@ -238,12 +238,7 @@ class Strategy:
             v = (sl or {}).get(tf, {})
             return ((v.get('rsi') or {}).get('sign', 0) < 0) and ((v.get('macd') or {}).get('sign', 0) < 0)
 
-        def _tf_against(sl, tf):
-            v = (sl or {}).get(tf, {})
-            return ((v.get('rsi') or {}).get('sign', 0) < 0) or ((v.get('macd') or {}).get('sign', 0) < 0)
-
-        _leg_entry_ok = (_both_pos(cand_leg_slopes, 'H4') and _both_pos(cand_leg_slopes, 'M5')
-                         and not _tf_against(cand_leg_slopes, 'M15'))
+        _leg_entry_ok = (_both_pos(cand_leg_slopes, 'H4') and _both_pos(cand_leg_slopes, 'M5'))
         new_entry = ('BUY' if (_both_pos(slopes, 'H4') and _leg_entry_ok)
                      else ('SELL' if (_both_neg(slopes, 'H4') and _leg_entry_ok) else None))
 

@@ -7,6 +7,10 @@ Format: `YYYY-MM-DD` — change — _why_.
 
 ---
 
+## 2026-11-09 — Fresh entry: drop the candidate-leg M15 dependency (owner)
+
+Removed the leg-M15 anti-vibration check from the fresh-entry gate. Opening a position now needs only: **INDEX H4 both-directional** AND the **candidate CE/PE leg's own H4 + M5 both +ve** (the leg-M15 "don't open into an immediate force-close" guard is obsolete now that the force-close reads the INDEX multi-TF score — M15·H1·H4 — not the leg's M15). Also dropped M15 from `OPEN_LEG_TIMEFRAMES`, so the candidate leg is fetched on H4/M5 only (one less call). The unused `_tf_against` helper was removed. All 8 RSI+MACD branches. _Why: owner asked to remove the M15 dependency from opening a position._
+
 ## 2026-11-09 — Force-close: remove the H6 final-close (owner)
 
 Removed the H6 RSI final forced-close added earlier today (per owner, both families). A maxed-out ladder (count 6) no longer auto-closes on the H6 RSI — it holds until the normal profit exit (netting book-score / hedging ₹ target) or the multi-TF index force-close. `symbol_worker` no longer fetches the H6 RSI. All 8 RSI+MACD branches. _Why: owner asked to remove the H6 final-close from both netting and hedging._
