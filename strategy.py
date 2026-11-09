@@ -207,6 +207,7 @@ class Strategy:
         rsi_15m = rsi_mtf.get('TIMEFRAME_M15', 50.0) if rsi_mtf else 50.0
         rsi_1h = rsi_mtf.get('TIMEFRAME_H1', 50.0) if rsi_mtf else 50.0
         rsi_4h = rsi_mtf.get('TIMEFRAME_H4', 50.0) if rsi_mtf else 50.0
+        rsi_6h = rsi_mtf.get('TIMEFRAME_H6', 50.0) if rsi_mtf else 50.0   # Alcadeias H6 final forced-close
 
         slope_direction = self._slope_direction(slopes)   # structural read (dashboard/compare only)
 
@@ -215,18 +216,12 @@ class Strategy:
         # ── Per-section RAW weighted slope scores (no BOOK section in this variant) ──
         # OPEN (entry + ladder-add gate) + the entry agreement-gate veto read the INDEX slopes.
         open_score = self._weighted_score(slopes, OPEN_SCORE_WEIGHTS, grey_fill=True)
-        fc_gate = self._weighted_score(slopes, FORCE_CLOSE_SCORE_WEIGHTS)   # index FC → entry veto
-        # FORCE-CLOSE reads the ACTIVE LEG's own option chart (leg_slopes). Booking is the ₹ target.
-        fc_leg = self._weighted_score(leg_slopes, FORCE_CLOSE_SCORE_WEIGHTS)
-        # Grey-slope fallback (owner fix): the force-close M15 slope can sit grey (no pivot) too long
-        # so the basket never closes. If M15 is grey, fall back to leg M5; if M5 is also grey, take
-        # out the RSI OB/OS regime boundary (unbounded raw slopes) and read M15 then M5.
-        if fc_leg == 0:
-            fc_leg = self._weighted_score(leg_slopes, {'M5': 1})
-        if fc_leg == 0 and leg_slopes_raw:
-            fc_leg = (self._weighted_score(leg_slopes_raw, FORCE_CLOSE_SCORE_WEIGHTS)
-                      or self._weighted_score(leg_slopes_raw, {'M5': 1}))
-        fc_score = fc_leg if in_position else fc_gate   # dashboard FC meter: leg when open, else index gate
+        # FORCE-CLOSE (Alcadeias): a weighted MULTI-TIMEFRAME reversal on the INDEX — M15·H1·H4·D1
+        # (4/3/2/1), range ±20, threshold FORCE_CLOSE_S=12. A high-conviction trend reversal, NOT a
+        # single-M15 trigger, so it no longer pre-empts the RSI DCA ladder (which averages up to H4).
+        # Faithful to Alcadeias (reads the instrument it trades); on options we read the underlying.
+        fc_score = self._weighted_score(slopes, FORCE_CLOSE_SCORE_WEIGHTS)
+        fc_gate = fc_score                                   # entry agreement-gate uses the same score
 
         # Fresh-entry direction (agreement gate, on the index).
         entry_direction = self._entry_direction(open_score, fc_gate)
@@ -257,16 +252,11 @@ class Strategy:
         buy_add_ok = open_score > -LADDER_S
         sell_add_ok = open_score < LADDER_S
 
-        # Force-close (EXIT, on the LEG) — close only when BOTH the leg's M15 slopes reverse AGAINST
-        # the basket (fc_leg beyond ∓FORCE_CLOSE_S, now ±2) AND the loss is past the floor
-        # (FC_MIN_LOSS_PER_UNIT × units) — so a shallow dip isn't booked as a tiny churn loss and a
-        # profitable reversal waits for the ₹ target instead of booking small. Set the floor to 0 to
-        # stop on the both-slopes signal alone. Suppressed during the post-entry min-hold (exit_allowed).
-        fc_loss_floor = FC_MIN_LOSS_PER_UNIT * (times or 1)
-        buy_loss_ok = (fc_loss_floor <= 0) or (buy_profit <= -fc_loss_floor)
-        sell_loss_ok = (fc_loss_floor <= 0) or (sell_profit <= -fc_loss_floor)
-        buy_fc = exit_allowed and (fc_leg <= -FORCE_CLOSE_S) and buy_loss_ok
-        sell_fc = exit_allowed and (fc_leg >= FORCE_CLOSE_S) and sell_loss_ok
+        # Force-close (EXIT): close when the INDEX FORCE-CLOSE score has moved far enough AGAINST the
+        # basket — BUY at fc_score <= -FORCE_CLOSE_S, SELL at >= +FORCE_CLOSE_S (Alcadeias). Suppressed
+        # during the post-entry min-hold (exit_allowed) so we never open-then-close.
+        buy_fc = exit_allowed and (fc_score <= -FORCE_CLOSE_S)
+        sell_fc = exit_allowed and (fc_score >= FORCE_CLOSE_S)
 
         if buy_count == 0 and sell_count == 0:
             # Fresh entry (single position; opens on the weighted score), cooldown-gated.
@@ -283,6 +273,9 @@ class Strategy:
             elif buy_fc:
                 buy_status = Signal.CLOSE_BUY
                 exit_reason = 'force_close'
+            elif buy_count == 6 and rsi_6h <= RSI_OVERSOLD:
+                buy_status = Signal.CLOSE_BUY       # Alcadeias H6 final forced-close (ladder maxed)
+                exit_reason = 'final_h6'
             elif buy_add_ok:
                 if rsi_1m <= RSI_OVERSOLD and buy_count == 1:
                     buy_status = Signal.BUY_MORE
@@ -303,6 +296,9 @@ class Strategy:
             elif sell_fc:
                 sell_status = Signal.CLOSE_SELL
                 exit_reason = 'force_close'
+            elif sell_count == 6 and rsi_6h >= RSI_OVERBOUGHT:
+                sell_status = Signal.CLOSE_SELL     # Alcadeias H6 final forced-close (ladder maxed)
+                exit_reason = 'final_h6'
             elif sell_add_ok:
                 if rsi_1m >= RSI_OVERBOUGHT and sell_count == 1:
                     sell_status = Signal.SELL_MORE
