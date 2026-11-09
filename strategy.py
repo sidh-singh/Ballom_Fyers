@@ -81,6 +81,33 @@ class Strategy:
         return s if s in (-1, 0, 1) else 0
 
     @staticmethod
+    def _decisive(sl, tf):
+        """+1 if BOTH the RSI and MACD slopes are up, -1 if BOTH down, else 0 (grey OR mismatch).
+        The unit of the new (2026) fallback model: a timeframe only 'counts' when its two slopes
+        agree — otherwise it is indecisive and the caller walks to the next source in its chain."""
+        r = Strategy._slope_sign(sl, tf, 'rsi')
+        m = Strategy._slope_sign(sl, tf, 'macd')
+        if r > 0 and m > 0:
+            return 1
+        if r < 0 and m < 0:
+            return -1
+        return 0
+
+    @staticmethod
+    def _resolve_confirm(leg_sl, idx_sl, pol, chain):
+        """Walk a fallback chain of (role, tf) steps and return the FIRST decisive sign, else 0.
+        role 'leg' = the option leg's OWN decisive sign; role 'idx' = the INDEX decisive sign ×
+        polarity (CE pol=+1 as-is, PE pol=-1 inverted — an option tracks/▽ the index by its type).
+        +1 = the chosen long option is ADVANCING (good); used for the fresh-entry confirm gates."""
+        for role, tf in chain:
+            s = Strategy._decisive(leg_sl if role == 'leg' else idx_sl, tf)
+            if role == 'idx':
+                s *= pol
+            if s:
+                return s
+        return 0
+
+    @staticmethod
     def _weighted_score(slopes, weights, grey_fill=False):
         """RAW weighted slope score for one section's {TF: weight} map.
             score = Σ weight * (rsi_sign + macd_sign)   over the map  (each sign ∈ {-1,0,+1})
@@ -212,47 +239,45 @@ class Strategy:
 
         in_position = (buy_count + sell_count) > 0
 
-        # ── Per-section RAW weighted slope scores (no BOOK section in this variant) ──
-        # OPEN (entry + ladder-add gate) + the entry agreement-gate veto read the INDEX slopes.
+        # OPEN score (INDEX H4+M5) — kept ONLY as the DCA ladder-add trend filter.
         open_score = self._weighted_score(slopes, OPEN_SCORE_WEIGHTS, grey_fill=True)
-        # FORCE-CLOSE (Alcadeias "read what you trade"): a weighted MULTI-TIMEFRAME reversal on the
-        # ACTIVE LEG's own option chart — M15·H1·H4 (4/3/2), range ±18, threshold FORCE_CLOSE_S=12.
-        # High-conviction, so it does not pre-empt the RSI DCA ladder. Fallback for a data-thin leg
-        # whose higher TFs have no pivot yet: the leg's own M5 both-slope reversal (×FORCE_CLOSE_S//2).
-        fc_score = self._weighted_score(leg_slopes, FORCE_CLOSE_SCORE_WEIGHTS)
-        if fc_score == 0:
-            fc_score = self._weighted_score(leg_slopes, {'M5': 1}) * (FORCE_CLOSE_S // 2)
-        fc_gate = fc_score                                   # entry agreement-gate (display) uses the same score
 
-        # Fresh-entry direction (agreement gate, on the index).
-        entry_direction = self._entry_direction(open_score, fc_gate)
-        open_wants = 'BUY' if open_score >= ENTRY_S else ('SELL' if open_score <= -ENTRY_S else None)
-        entry_chop_block = bool(open_wants and entry_direction is None)
+        # Active-leg polarity for the index backup: CE basket = +1 (tracks index), PE = -1 (inverse),
+        # flat = 0. Both legs are LONG options, so every exit condition is identical for CE and PE.
+        act_pol = 1 if buy_count > 0 else (-1 if sell_count > 0 else 0)
 
-        # Fresh-entry gate (owner): INDEX H4 both-directional + the CANDIDATE option leg's OWN H4 and
-        # M5 both +ve. (The leg-M15 anti-vibration guard was removed — the force-close now reads the
-        # index multi-TF score, not the leg's M15.)
-        def _both_pos(sl, tf):
-            v = (sl or {}).get(tf, {})
-            return ((v.get('rsi') or {}).get('sign', 0) > 0) and ((v.get('macd') or {}).get('sign', 0) > 0)
+        # ── FORCE-CLOSE = trend-reversal stop on the ACTIVE option LEG's OWN chart (M15·H1·H4, 4/3/2).
+        # Per TF: the leg's own decisive slope; if that TF is grey/indecisive, borrow the INDEX's
+        # same-TF decisive slope (polarity-adjusted). A reversal AGAINST a long option is the option
+        # turning DOWN → fc_score ≤ -FORCE_CLOSE_S fires for BOTH CE and PE (no mirrored sign). No M5
+        # hair-trigger: if every TF is grey on leg AND index, fc_score=0 → HOLD. (±18: decisive TF = ±2·w.)
+        fc_score = 0
+        for _tf, _w in FORCE_CLOSE_SCORE_WEIGHTS.items():
+            _s = self._decisive(leg_slopes, _tf)
+            if _s == 0 and act_pol != 0:
+                _s = self._decisive(slopes, _tf) * act_pol
+            fc_score += _w * _s * 2
+        buy_fc = exit_allowed and buy_count > 0 and (fc_score <= -FORCE_CLOSE_S)
+        sell_fc = exit_allowed and sell_count > 0 and (fc_score <= -FORCE_CLOSE_S)
 
-        def _both_neg(sl, tf):
-            v = (sl or {}).get(tf, {})
-            return ((v.get('rsi') or {}).get('sign', 0) < 0) and ((v.get('macd') or {}).get('sign', 0) < 0)
+        # ── FRESH-ENTRY gate (while FLAT): INDEX H4 sets direction (H4 → H1 backup); then the CANDIDATE
+        # leg must be ADVANCING on H4 and M5. Each confirm walks Leg-own → finer/Index(polarity):
+        #   H4 confirm: leg H4 → leg H1 → index H1(pol)
+        #   M5 confirm: leg M5 → index M5(pol) → leg M1 → index M1(pol)
+        idx_dir = self._decisive(slopes, 'H4') or self._decisive(slopes, 'H1')
+        _pol = idx_dir if idx_dir != 0 else 1
+        h4_ok = self._resolve_confirm(cand_leg_slopes, slopes, _pol,
+                                      [('leg', 'H4'), ('leg', 'H1'), ('idx', 'H1')])
+        m5_ok = self._resolve_confirm(cand_leg_slopes, slopes, _pol,
+                                      [('leg', 'M5'), ('idx', 'M5'), ('leg', 'M1'), ('idx', 'M1')])
+        new_entry = ('BUY' if (idx_dir > 0 and h4_ok == 1 and m5_ok == 1)
+                     else ('SELL' if (idx_dir < 0 and h4_ok == 1 and m5_ok == 1) else None))
+        entry_direction = new_entry or 'WAIT'               # dashboard display
+        entry_chop_block = False
 
-        _leg_entry_ok = (_both_pos(cand_leg_slopes, 'H4') and _both_pos(cand_leg_slopes, 'M5'))
-        new_entry = ('BUY' if (_both_pos(slopes, 'H4') and _leg_entry_ok)
-                     else ('SELL' if (_both_neg(slopes, 'H4') and _leg_entry_ok) else None))
-
-        # DCA ladder-add gate: average in only while the OPEN (index) score is not strongly adverse.
+        # DCA ladder-add gate: average in only while the INDEX OPEN score is not strongly adverse.
         buy_add_ok = open_score > -LADDER_S
         sell_add_ok = open_score < LADDER_S
-
-        # Force-close (EXIT): close when the INDEX FORCE-CLOSE score has moved far enough AGAINST the
-        # basket — BUY at fc_score <= -FORCE_CLOSE_S, SELL at >= +FORCE_CLOSE_S (Alcadeias). Suppressed
-        # during the post-entry min-hold (exit_allowed) so we never open-then-close.
-        buy_fc = exit_allowed and (fc_score <= -FORCE_CLOSE_S)
-        sell_fc = exit_allowed and (fc_score >= FORCE_CLOSE_S)
 
         if buy_count == 0 and sell_count == 0:
             # Fresh entry (single position; opens on the weighted score), cooldown-gated.
@@ -282,7 +307,9 @@ class Strategy:
                     buy_status = Signal.BUY_MORE
 
         elif buy_count == 0 and sell_count > 0:
-            # Open SELL (mirror): profit target → force-close → RSI DCA ladder.
+            # Open SELL (PE is also a LONG option): profit target → force-close → RSI DCA ladder.
+            # The ladder reads the ACTIVE PE leg's OWN RSI, so it averages in on the leg's DIPS
+            # (oversold) exactly like the BUY/CE side — not on overbought (the old index-era mirror).
             if exit_allowed and sell_profit > close_threshold:
                 sell_status = Signal.CLOSE_SELL
                 exit_reason = 'target'
@@ -290,15 +317,15 @@ class Strategy:
                 sell_status = Signal.CLOSE_SELL
                 exit_reason = 'force_close'
             elif sell_add_ok:
-                if rsi_1m >= RSI_OVERBOUGHT and sell_count == 1:
+                if rsi_1m <= RSI_OVERSOLD and sell_count == 1:
                     sell_status = Signal.SELL_MORE
-                elif rsi_5m >= RSI_OVERBOUGHT and sell_count == 2:
+                elif rsi_5m <= RSI_OVERSOLD and sell_count == 2:
                     sell_status = Signal.SELL_MORE
-                elif rsi_15m >= RSI_OVERBOUGHT and sell_count == 3:
+                elif rsi_15m <= RSI_OVERSOLD and sell_count == 3:
                     sell_status = Signal.SELL_MORE
-                elif rsi_1h >= RSI_OVERBOUGHT and sell_count == 4:
+                elif rsi_1h <= RSI_OVERSOLD and sell_count == 4:
                     sell_status = Signal.SELL_MORE
-                elif rsi_4h >= RSI_OVERBOUGHT and sell_count == 5:
+                elif rsi_4h <= RSI_OVERSOLD and sell_count == 5:
                     sell_status = Signal.SELL_MORE
 
         analysis_data = {
