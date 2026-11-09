@@ -7,6 +7,10 @@ Format: `YYYY-MM-DD` — change — _why_.
 
 ---
 
+## 2026-11-09 — Tax estimate is now exchange-aware (MCX CTT vs NSE STT)
+
+`estimate_trade_charges` applied NSE rates to every symbol, but GOLDM/SILVERM trade on **MCX** with a different charge structure — so their net P&L and the ₹ profit target were approximate. Added an `is_commodity` branch: MCX commodity options now use **CTT 0.05% (sell) + MCX exchange-txn 0.0418%/side**; NSE index options keep **STT 0.15% + NSE exchange 0.0355299%/side** (stamp 0.003% buy, SEBI ₹10/cr, GST 18%, flat brokerage — same for both). `symbol_worker` passes `is_commodity=(asset_type == "COMMODITY")` at both charge sites (the profit-target threshold and the booked close). Result: GOLDM/SILVERM book/estimate on real MCX charges (lower than NSE — CTT is ⅓ of STT); **NIFTY is unchanged** (the no-arg default stays NSE). ⚠️ Rates are from current broker charge lists — verify against the official MCX schedule before trusting commodity figures to the rupee. All 8 RSI+MACD branches. _Why: owner cross-checked and confirmed taxes differ by exchange; chose to make the estimator MCX-aware._
+
 ## 2026-11-09 — Fix: NIFTY profit target now actually applies (symbols.json override was pinning it)
 
 The ₹500 profit tune earlier today changed `constants.HEDGE_PER_UNIT`, but `symbol_worker` reads `cfg.get("hedge_per_unit", HEDGE_PER_UNIT)` — the **per-symbol `symbols.json` value wins**. NIFTY (the only enabled symbol) had `"hedge_per_unit": 300`, so it was still booking ₹300/unit, NOT ₹500. Raised NIFTY `hedge_per_unit` 300 → **500** in `symbols.json` (and `symbols.example.json` on linux) so the chosen ₹500 target actually takes effect. The loss floor (`FC_MIN_LOSS_PER_UNIT`, a global constant) was already live at ₹300/unit. ⚠️ The **live Linux server runs its own un-tracked `symbols.json`** — edit it there too (set NIFTY `hedge_per_unit: 500`) for the running bot to pick it up. GOLD/SILVER remain disabled. _Why: cross-check for the owner surfaced that the per-symbol override silently blocked the ₹500 tune._
