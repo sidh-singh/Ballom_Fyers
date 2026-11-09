@@ -7,6 +7,19 @@ Format: `YYYY-MM-DD` — change — _why_.
 
 ---
 
+## 2026-11-09 — Hedging: cut force-close churn (both-slope stop + per-unit loss floor)
+
+Owner saw the HEDGING bots booking many small profits AND small losses while opening lots of little positions. Diagnosis: the ₹ profit **target** books net ≈ ₹300×units + taxes (fine) — the churn came from the **force-close stop-loss**, which was twitchy. It fired on M15 when **EITHER** the leg's RSI or MACD slope reversed (`FORCE_CLOSE_S = 1`), booking whatever tiny P&L was there, then re-entered. That stream of exits + re-entries = the small ± bookings.
+
+Fix — keeps the stop-loss, cuts the churn (**hedging branches only**):
+- **Both slopes required:** force-close fires only when **BOTH** the leg's M15 RSI *and* MACD slopes reverse against the basket (`FORCE_CLOSE_S` 1 → 2; range ±2 on {M15}). A single twitchy slope no longer stops the trade.
+- **Loss floor:** new `FC_MIN_LOSS_PER_UNIT = 200` (₹/unit). The stop fires only once the basket's loss reaches `200 × units` — a shallow dip is left to recover / average instead of being booked as a tiny loss, and a **profitable** reversal is no longer booked early (it waits for the ₹ target). Set `0` to stop on the both-slopes signal alone (old behaviour, minus the "either" sensitivity).
+- **Longer re-entry cooldown:** `REENTRY_COOLDOWN_SECONDS` 300 → 600 s, so it doesn't immediately churn back in after a close.
+
+Net effect: far fewer, more meaningful bookings — profits at the ₹ target, losses only on a genuine both-slope reversal past the floor. The profit **target itself is unchanged** (`HEDGE_PER_UNIT = 300`/unit NET + taxes = your "tax + extra"). Trade-off to be aware of: because a shallow reversal is now held, an occasional stop books up to ≈ `FC_MIN_LOSS_PER_UNIT × units` rather than a few rupees — fewer losses, each a bit larger. All 4 hedging branches (`fyers_hedging` + `linux_fyers_hedging`, live + demo). _Why: owner asked why the small +/- churn was happening and to book only tax + a real margin; chose to keep the stop-loss but stop the tiny-loss churn._
+
+Tunables (`constants.py`): `FORCE_CLOSE_S` (both-slope strictness), `FC_MIN_LOSS_PER_UNIT` (loss floor ₹/unit; 0 = off), `REENTRY_COOLDOWN_SECONDS`, `HEDGE_PER_UNIT` (profit target ₹/unit).
+
 ## 2026-11-09 — Dashboard is now mobile-phone friendly (responsive layout)
 
 The dashboard renders properly on a phone, matching the `health_check` dashboard. Added the **viewport meta-tag** (`width=device-width, initial-scale=1`) so the page scales to the screen instead of showing a zoomed-out desktop layout; both Plotly charts are **responsive** (`config` responsive + figure `autosize` + width 100%) so they resize to their container; the per-symbol **info column and price/booking-chart column** — plus the **API-usage cards** — now **wrap and stack** on narrow screens (fluid `flex`-basis + `flexWrap` + `minWidth:0`); the **strategy-log table scrolls horizontally** instead of overflowing the page, and the **API rate-limit rows wrap**. Desktop is unchanged — the fluid bases only take effect once the viewport is too narrow for side-by-side columns. Both families patched (HAM `info_row` + RSI+MACD `top` symbol-panel splits). All 12 branches. _Why: owner wanted every bot's dashboard to be phone-friendly like health_check's._

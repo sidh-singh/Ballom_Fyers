@@ -268,15 +268,23 @@ MACD_SIGNAL = 9                # signal EMA length
 ENTRY_S       = 2              # |open_score| to OPEN. OPEN range ±4 (H4+M5, w1+w1); +2 = one TF fully aligned.
 ENTRY_AGREE_S = 0              # agreement gate: force-close score must not oppose the open (BUY needs fc_score >= +0).
 LADDER_S      = 2              # DCA ladder add blocked once OPEN score is this far adverse (BUY add needs open_score > -2).
-FORCE_CLOSE_S = 1              # force-close on M15 when EITHER RSI or MACD slope reverses against the basket
-                               # (range ±2 for {M15}; BUY close fc_score <= -1, i.e. net-adverse M15 slope).
+FORCE_CLOSE_S = 2              # force-close on M15 only when BOTH RSI AND MACD slopes reverse against the basket
+                               # (range ±2 for {M15}; BUY close fc_score <= -2 = both M15 signs adverse). Raised
+                               # from 1 ("either") to cut churn — a single twitchy slope no longer stops the trade.
+
+# Force-close loss FLOOR (₹ per unit): don't stop a basket out while its loss is still smaller than
+# FC_MIN_LOSS_PER_UNIT × units — let a shallow dip recover / average instead of booking a tiny churn
+# loss. The stop fires only once the loss reaches the floor AND both M15 slopes have reversed; a
+# profitable reversal is NOT booked early (it waits for the ₹ target). Set 0 to disable the floor
+# (stop on the both-slopes signal alone, as before).
+FC_MIN_LOSS_PER_UNIT = 200
 BOOK_S        = 2              # profit-book (NETTING only): in profit, book when BOTH M5 slopes (RSI+MACD)
                                # reverse (range ±2 for {M5}; BUY book_score <= -2).
 
 # ── Per-section timeframe weights (config-driven). Short keys M5/M15/H1/H4/D1. ──
 #   OPEN        -> fresh entry + the DCA ladder-add gate               : H4 + M5   (grey_fill on)
 #   BOOK        -> profit-book (NETTING only; HEDGING books via the ₹ target) : M5 (grey_fill on; BOOK_S=2 → both reverse)
-#   FORCE_CLOSE -> force-close + the entry agreement-gate veto          : M15      (raw signs; FORCE_CLOSE_S=1 → either reverses)
+#   FORCE_CLOSE -> force-close + the entry agreement-gate veto          : M15      (raw signs; FORCE_CLOSE_S=2 → both reverse)
 OPEN_SCORE_WEIGHTS        = {'H4': 1, 'M5': 1}
 BOOK_SCORE_WEIGHTS        = {'M5': 1}
 FORCE_CLOSE_SCORE_WEIGHTS = {'M15': 1}
@@ -305,7 +313,7 @@ RSI_PEAK_OB   = 60             # a HIGH pivot on RSI counts only if value >= thi
 RSI_PEAK_OS   = 40             # a LOW  pivot on RSI counts only if value <= this
 RSI_GRAPH_BARS = 40            # bars each dashboard RSI/MACD pivot mini-chart plots (> PEAK_LOOKBACK)
 
-REENTRY_COOLDOWN_SECONDS = 300 # block a fresh entry for this long after any close
+REENTRY_COOLDOWN_SECONDS = 600 # block a fresh entry for this long after any close (raised 300→600 to cut re-entry churn)
 MIN_HOLD_SECONDS = 180         # after an entry, suppress BOOK + FORCE-CLOSE for this long so the
                                # basket can't open-then-close on a stale leg pivot (anti-vibration).
                                # Adds (DCA ladder) are still allowed; entry is state-gated anyway.
