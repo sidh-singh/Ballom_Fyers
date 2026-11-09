@@ -1,5 +1,9 @@
 # CHANGELOG — `fyers_live` / `fyers_demo`
 
+## 2026-11-09 — DCA ladder + force-close now read the ACTIVE CE/PE leg (not the index)
+
+Per owner (Alcadeias "read what you trade"): the DCA ladder's RSI tiers and the force-close now read the **active option leg's own candles**, not the underlying index. Force-close = leg `M15·H1·H4` (4/3/2, ≤ −12, reads `leg_slopes`) with a leg-M5 fallback for a data-thin leg; DCA ladder = the leg's own RSI (M1–H4). Fresh entry stays INDEX H4 (picks CE/PE) + candidate leg H4·M5; the ladder **add-gate** (`open_score`) stays on the INDEX (a trend filter — moving it to the leg would self-block averaging); netting booking already reads leg M5; hedging ₹ target. Plumbing: `SLOPE_TIMEFRAMES`→OPEN only (index fetches just H4·M5), `LEG_SLOPE_TIMEFRAMES`→BOOK+FORCE_CLOSE (M5·M15·H1·H4), `symbol_worker._leg_slopes` also computes the leg RSI set and the tick routes it to the ladder. Feasible on month-end monthly options (enough M15/H1/H4 history). Netting ref `rsimacd_btcusd1_wd_exp_h`; hedging ref `rsimacd_h6_btcusd1_wd_exp_h`. All 8 RSI+MACD branches. _Why: owner directed the ladder + force-close reference the CE/PE pair, not the index._
+
 ## 2026-11-09 — Fresh entry: drop the candidate-leg M15 dependency (owner)
 
 Removed the leg-M15 anti-vibration check from the fresh-entry gate. Opening a position now needs only: **INDEX H4 both-directional** AND the **candidate CE/PE leg's own H4 + M5 both +ve** (the leg-M15 "don't open into an immediate force-close" guard is obsolete now that the force-close reads the INDEX multi-TF score — M15·H1·H4 — not the leg's M15). Also dropped M15 from `OPEN_LEG_TIMEFRAMES`, so the candidate leg is fetched on H4/M5 only (one less call). The unused `_tf_against` helper was removed. All 8 RSI+MACD branches. _Why: owner asked to remove the M15 dependency from opening a position._
