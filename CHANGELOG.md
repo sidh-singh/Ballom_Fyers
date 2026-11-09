@@ -1,5 +1,27 @@
 # CHANGELOG — `fyers_live` / `fyers_demo`
 
+## 2026-11-10 — Auto-tuner: daily hill-climb of the hedging ₹ target + dashboard chart
+
+New `auto_tune.py` adaptively **"trains" the hedging ₹ profit target** (`hedge_per_unit`) per symbol.
+Once a day, ~5 min before that asset's close (NIFTY 15:25, commodities 23:25), it reads the day's
+closed trades from `profit_history.json`, computes **win-ratio** + **total net ₹**, and compares to
+the previous recorded day:
+- both metrics non-worse & ≥1 better → **+₹100**; both non-better & ≥1 worse → **−₹100**; else **hold**.
+- Guards: need **≥3 closes** that day to move; clamp to **[₹100 floor, ₹1000 cap]**; once/day (idempotent).
+
+The new amount is **auto-applied** (the worker loads it on start and re-reads after each tune) and
+persisted to `auto_tune.json`; the worker still keeps the symbols.json value as the base/floor. Uses
+≥/≤ (not strict) so a saturated win-ratio — common here, trades often all win — still lets a rising
+net ₹ push the target up instead of stalling. An `AUTO_TUNE` event is logged on each change.
+
+**Dashboard:** a new **bottom chart per symbol** — the daily target as a step line, markers coloured
+by that day's step (green +₹100 / red −₹100 / grey hold), plus a dashed **best-fit average line** (the
+converged "best amount"); win% · net ₹ · trades show in the hover. Hidden until a symbol has history.
+
+**HEDGING branches only** — netting's `hedge_per_unit` is a book *floor* (a different role) and is left
+untuned, so `symbol_worker.py`/`dashboard.py` now differ between the hedging and netting variants.
+_Why: owner wanted the amount to self-optimise toward high win-ratio + earnings, "like training the model."_
+
 ## 2026-11-10 — Hedging profit target ₹500 → ₹100/unit (start small)
 
 Lowered the HEDGING ₹ profit target from ₹500 to **₹100 net per unit** (`hedge_per_unit` in the symbols
