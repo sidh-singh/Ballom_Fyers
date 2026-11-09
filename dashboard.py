@@ -505,7 +505,7 @@ def _slope_block(s):
                           scores.get("book"), BOOK_S, _score_axis(BOOK_SCORE_WEIGHTS),
                           hi=("book SHORT", C["purple"]), lo=("book LONG", C["purple"]),
                           within=("hold", C["grey"])))
-        meters.append(_meter("FORCE-CLOSE (index M15·H1·H4·D1)", f"idx ±{FORCE_CLOSE_S:g}", scores.get("fc"),
+        meters.append(_meter("FORCE-CLOSE (index M15·H1·H4)", f"idx ±{FORCE_CLOSE_S:g}", scores.get("fc"),
                       FORCE_CLOSE_S, fc_axis, hi=("close SHORT", C["amber"]),
                       lo=("close LONG", C["amber"]), within=("hold", C["grey"])))
     else:

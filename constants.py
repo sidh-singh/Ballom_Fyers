@@ -275,8 +275,8 @@ MACD_SIGNAL = 9                # signal EMA length
 ENTRY_S       = 2              # |open_score| to OPEN. OPEN range ±4 (H4+M5, w1+w1); +2 = one TF fully aligned.
 ENTRY_AGREE_S = 0              # agreement gate: force-close score must not oppose the open (BUY needs fc_score >= +0).
 LADDER_S      = 2              # DCA ladder add blocked once OPEN score is this far adverse (BUY add needs open_score > -2).
-FORCE_CLOSE_S = 12             # force-close when the INDEX FORCE-CLOSE score (M15·H1·H4·D1 = 4/3/2/1,
-                               # range ±20) is this far AGAINST the basket — a high-conviction MULTI-TF
+FORCE_CLOSE_S = 12             # force-close when the INDEX FORCE-CLOSE score (M15·H1·H4 = 4/3/2,
+                               # range ±18) is this far AGAINST the basket — a high-conviction MULTI-TF
                                # reversal, NOT a single-M15 trigger, so it doesn't pre-empt the RSI DCA
                                # ladder (faithful to Alcadeias). BUY close fc_score <= -12, SELL >= +12.
 
@@ -295,7 +295,7 @@ BOOK_S        = 2              # profit-book (NETTING only): in profit, book whe
 #   FORCE_CLOSE -> force-close + the entry agreement-gate veto          : M15      (raw signs; FORCE_CLOSE_S=2 → both reverse)
 OPEN_SCORE_WEIGHTS        = {'H4': 1, 'M5': 1}
 BOOK_SCORE_WEIGHTS        = {'M5': 1}
-FORCE_CLOSE_SCORE_WEIGHTS = {'M15': 4, 'H1': 3, 'H4': 2, 'D1': 1}   # Alcadeias multi-TF (index), range ±20
+FORCE_CLOSE_SCORE_WEIGHTS = {'M15': 4, 'H1': 3, 'H4': 2}            # Alcadeias multi-TF (index), ±18 (D1 dropped)
 
 # Slope fetch list (auto-derived union of every TF named in any section above),
 # mapped short-key -> 'TIMEFRAME_<key>'. Adding a TF to a section dict is enough.
