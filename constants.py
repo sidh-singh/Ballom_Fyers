@@ -295,13 +295,13 @@ FORCE_CLOSE_SCORE_WEIGHTS = {'M15': 4, 'H1': 3, 'H4': 2}            # Alcadeias 
 # ladder-add gate) and the entry agreement-gate veto (FORCE_CLOSE score at entry). With the
 # current sections this is {H4, M5, M15}.
 SLOPE_TIMEFRAMES = ['TIMEFRAME_' + _tf for _tf in dict.fromkeys(
-    _k for _d in (OPEN_SCORE_WEIGHTS, BOOK_SCORE_WEIGHTS, FORCE_CLOSE_SCORE_WEIGHTS) for _k in _d
-)]
+    _k for _d in (OPEN_SCORE_WEIGHTS,) for _k in _d          # INDEX now only drives OPEN entry + add-gate
+)]                                                           # (the ladder RSI + force-close read the LEG)
 # LEG slope set (computed on the ACTIVE CE/PE option's own candles, once a basket is open):
 # drives the profit-BOOK and FORCE-CLOSE exits. Union of the two exit sections = {M5, M15}.
 LEG_SLOPE_TIMEFRAMES = ['TIMEFRAME_' + _tf for _tf in dict.fromkeys(
-    _k for _d in (BOOK_SCORE_WEIGHTS,) for _k in _d          # leg slopes now drive ONLY the BOOK exit;
-)]                                                           # force-close moved to the INDEX (multi-TF)
+    _k for _d in (BOOK_SCORE_WEIGHTS, FORCE_CLOSE_SCORE_WEIGHTS) for _k in _d   # leg slopes: BOOK (M5)
+)]                                                           # + FORCE-CLOSE (M15·H1·H4) — both on the leg
 # CANDIDATE-leg slope set, computed while FLAT to gate a fresh entry: the option leg's own H4 + M5
 # (both RSI+MACD must be +ve), plus M15 for the anti-vibration check (must not already be reversing).
 OPEN_LEG_TIMEFRAMES = ['TIMEFRAME_H4', 'TIMEFRAME_M5']   # candidate-leg entry gate (M15 dropped — owner)
