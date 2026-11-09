@@ -7,6 +7,19 @@ Format: `YYYY-MM-DD` — change — _why_.
 
 ---
 
+## 2026-11-09 — Netting: cut force-close churn too (loss side — profit-book already clean)
+
+Same small-loss churn the hedging branches had: the **force-close stop-loss** fired on M15 when **EITHER** the leg's RSI or MACD slope reversed (`FORCE_CLOSE_S = 1`), booking tiny losses then re-entering. Netting's **profit-book exit is different and already clean** — it books only when in profit **above the tax floor** (`close_threshold`) **AND** the M5 BOOK score reverses (`book_score <= -BOOK_S`), so it never booked a tiny/negative "profit." Only the loss side needed the fix.
+
+Applied the identical loss-side fix (**profit-book untouched**):
+- **Both slopes required:** `FORCE_CLOSE_S` 1 → 2 — force-close fires only when BOTH the leg's M15 RSI *and* MACD slopes reverse.
+- **Loss floor:** new `FC_MIN_LOSS_PER_UNIT = 200` (₹/unit) — a shallow dip is held / averaged instead of booked as a tiny loss; the stop fires only once the loss reaches `200 × units` AND both slopes have reversed. Set `0` to stop on the both-slopes signal alone.
+- **Longer re-entry cooldown:** `REENTRY_COOLDOWN_SECONDS` 300 → 600 s.
+
+Net effect: netting keeps its clean, momentum-confirmed profit bookings and now books far fewer tiny losses too. Trade-off: an occasional stop books up to ≈ `FC_MIN_LOSS_PER_UNIT × units` rather than a few rupees. All 4 netting branches (`fyers_netting` + `linux_fyers_netting`, live + demo). _Why: owner asked whether the hedging churn fix applies to netting too — it does, on the loss side._
+
+Tunables (`constants.py`): `FORCE_CLOSE_S`, `FC_MIN_LOSS_PER_UNIT` (0 = off), `REENTRY_COOLDOWN_SECONDS`, `HEDGE_PER_UNIT` (profit-book floor ₹/unit = 300).
+
 ## 2026-11-09 — Dashboard is now mobile-phone friendly (responsive layout)
 
 The dashboard renders properly on a phone, matching the `health_check` dashboard. Added the **viewport meta-tag** (`width=device-width, initial-scale=1`) so the page scales to the screen instead of showing a zoomed-out desktop layout; both Plotly charts are **responsive** (`config` responsive + figure `autosize` + width 100%) so they resize to their container; the per-symbol **info column and price/booking-chart column** — plus the **API-usage cards** — now **wrap and stack** on narrow screens (fluid `flex`-basis + `flexWrap` + `minWidth:0`); the **strategy-log table scrolls horizontally** instead of overflowing the page, and the **API rate-limit rows wrap**. Desktop is unchanged — the fluid bases only take effect once the viewport is too narrow for side-by-side columns. Both families patched (HAM `info_row` + RSI+MACD `top` symbol-panel splits). All 12 branches. _Why: owner wanted every bot's dashboard to be phone-friendly like health_check's._
