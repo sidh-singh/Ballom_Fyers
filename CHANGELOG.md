@@ -7,6 +7,16 @@ Format: `YYYY-MM-DD` — change — _why_.
 
 ---
 
+## 2026-11-09 — Dashboard redesign: OHLC-primary, 3-way slopes (Index/CE/PE), per-position bars, collapsed Analysis
+
+Reworked each symbol panel to cut bulk and focus on the price action:
+- **OHLC** price chart is now the primary chart at the top.
+- **Compact RSI+MACD slopes** below it as THREE rows — **Index · CE · PE** — per-TF green ▲ / red ▼ / grey – arrows (R = RSI slope, M = MACD slope), replacing the bulky per-TF pivot mini-charts in the default view. The engine now computes BOTH pair legs' slope signs each tick (reusing the active leg, fetching only the other leg, cached per bar) → new `ce_slopes` / `pe_slopes` in the payload via `symbol_worker._display_leg_slopes`.
+- **Profit per position** — a simple one-bar-per-closed-cycle chart (net ₹ + time + hover), split out of the old 2-row booking chart (`per_position_chart`).
+- **▸ Analysis** — a collapsed `<details>` section with the detail: pair, entry meters, RSI, the full RSI/MACD pivot mini-charts, and the cumulative/drawdown chart (`cumulative_chart`).
+
+All 8 RSI+MACD branches (netting + hedging, live + demo). _Why: owner wanted a leaner, OHLC-focused dashboard with compact slopes for the index + both legs and a simpler per-position P/L._
+
 ## 2026-11-09 — DCA ladder + force-close now read the ACTIVE CE/PE leg (not the index)
 
 Per owner (Alcadeias "read what you trade"): the DCA ladder's RSI tiers and the force-close now read the **active option leg's own candles**, not the underlying index. Force-close = leg `M15·H1·H4` (4/3/2, ≤ −12, reads `leg_slopes`) with a leg-M5 fallback for a data-thin leg; DCA ladder = the leg's own RSI (M1–H4). Fresh entry stays INDEX H4 (picks CE/PE) + candidate leg H4·M5; the ladder **add-gate** (`open_score`) stays on the INDEX (a trend filter — moving it to the leg would self-block averaging); netting booking already reads leg M5; hedging ₹ target. Plumbing: `SLOPE_TIMEFRAMES`→OPEN only (index fetches just H4·M5), `LEG_SLOPE_TIMEFRAMES`→BOOK+FORCE_CLOSE (M5·M15·H1·H4), `symbol_worker._leg_slopes` also computes the leg RSI set and the tick routes it to the ladder. Feasible on month-end monthly options (enough M15/H1/H4 history). Netting ref `rsimacd_btcusd1_wd_exp_h`; hedging ref `rsimacd_h6_btcusd1_wd_exp_h`. All 8 RSI+MACD branches. _Why: owner directed the ladder + force-close reference the CE/PE pair, not the index._
