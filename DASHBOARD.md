@@ -24,6 +24,8 @@ python dashboard.py [port]            # default port 8050
 - Each branch is normally run on **its own port** (8050, 8051, …) so several bots can run
   side by side — see **BRANCHES.md** for this deployment's port.
 
+The UI is **responsive / mobile-friendly** — on a phone the panels stack, the charts resize to the screen and wide tables scroll, so there is no desktop-width zooming.
+
 **Open the host firewall** for the port:
 
 - Linux (ufw): `sudo ufw allow <port>/tcp`
