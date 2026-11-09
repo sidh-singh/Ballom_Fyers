@@ -7,6 +7,10 @@ Format: `YYYY-MM-DD` — change — _why_.
 
 ---
 
+## 2026-11-09 — Force-close: drop D1 (now M15·H1·H4)
+
+Per owner — removed the daily (D1) timeframe from the force-close score: `FORCE_CLOSE_SCORE_WEIGHTS` is now `{M15:4, H1:3, H4:2}` (range ±18; was +D1, ±20). The D1 pivot barely moves intraday and the Alcadeias source itself flags it as a wasted extra daily rates call, so this also drops the D1 index slope fetch per tick (`SLOPE_TIMEFRAMES` no longer includes D1). `FORCE_CLOSE_S` stays **12** — firing is unchanged: M15 **and** H1 (−14), or M15 **and** H4 (−12), fully reversed still force-closes; a lone M15 reversal (−8) still lets the ladder add. Netting references Alcadeias `rsimacd_btcusd1_wd_exp_h`, hedging `rsimacd_h6_btcusd1_wd_exp_h`. All 8 RSI+MACD branches. _Why: owner saw D1 in the force-close and confirmed it isn't needed._
+
 ## 2026-11-09 — Force-close overhaul: Alcadeias multi-TF index reversal + H6 final-close
 
 The port had simplified the Alcadeias force-close to a single **M15** trigger read on the **option leg**, which fired on any M15 wobble and **pre-empted the RSI DCA ladder** (the ladder averages up to H4, but a lone M15 reversal closed the basket first). Restored the Alcadeias design on all 8 RSI+MACD branches:

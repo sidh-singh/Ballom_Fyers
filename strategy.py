@@ -163,7 +163,7 @@ class Strategy:
         RSI+MACD slope strategy (HEDGING / ₹ target profit exit). Two per-section weighted scores,
         each from its OWN configurable timeframe set (constants OPEN/FORCE_CLOSE _SCORE_WEIGHTS):
           - open_score  -> fresh entry + the DCA ladder-add gate   (default TFs: H4, M5)
-          - fc_score    -> force-close                             (default TFs: M15,H1,H4,D1 w4/3/2/1)
+          - fc_score    -> force-close                             (default TFs: M15,H1,H4 w4/3/2)
 
           Flat: open when the OPEN score is directional AND the FORCE-CLOSE score agrees
                 (agreement gate); else WAIT. Single position, cooldown-gated.
@@ -216,8 +216,8 @@ class Strategy:
         # ── Per-section RAW weighted slope scores (no BOOK section in this variant) ──
         # OPEN (entry + ladder-add gate) + the entry agreement-gate veto read the INDEX slopes.
         open_score = self._weighted_score(slopes, OPEN_SCORE_WEIGHTS, grey_fill=True)
-        # FORCE-CLOSE (Alcadeias): a weighted MULTI-TIMEFRAME reversal on the INDEX — M15·H1·H4·D1
-        # (4/3/2/1), range ±20, threshold FORCE_CLOSE_S=12. A high-conviction trend reversal, NOT a
+        # FORCE-CLOSE (Alcadeias): a weighted MULTI-TIMEFRAME reversal on the INDEX — M15·H1·H4
+        # (4/3/2), range ±18, threshold FORCE_CLOSE_S=12. A high-conviction trend reversal, NOT a
         # single-M15 trigger, so it no longer pre-empts the RSI DCA ladder (which averages up to H4).
         # Faithful to Alcadeias (reads the instrument it trades); on options we read the underlying.
         fc_score = self._weighted_score(slopes, FORCE_CLOSE_SCORE_WEIGHTS)
