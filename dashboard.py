@@ -970,7 +970,7 @@ app.layout = html.Div([
         html.Div(style={"flex": "1"}),
         *([
             dcc.Input(id="addbal-amt", type="number", min=0, step=1000, placeholder="amount ₹",
-                      style={"width": "120px", "padding": "5px 8px", "borderRadius": "5px",
+                      style={"width": "180px", "padding": "5px 8px", "borderRadius": "5px",
                              "border": "1px solid #cbd3e1", "background": "#ffffff",
                              "color": "#161c2d", "fontSize": "13px"}),
             html.Button("＋ Add demo balance", id="addbal-btn", n_clicks=0,
