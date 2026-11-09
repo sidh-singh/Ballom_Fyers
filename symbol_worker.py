@@ -78,6 +78,7 @@ class SymbolWorker(threading.Thread):
         self._frame_cache: dict = {}        # (symbol, tf) -> (monotonic_fetch_time, ohlc_df) — per bar
         self._last_close_time = 0.0         # monotonic of last close → post-close re-entry cooldown
         self._entry_mono = None             # monotonic at first entry → post-entry min-hold (anti-vibration)
+        self._last_exit_reason = None       # 'target'|'book'|'force_close' → written into the close log
         self._pair_ttl = 300                # display-scan cache TTL (s)
         self._resolved_on = None            # IST date the commodity future was last resolved
         self._last_pair = None              # pair of the open basket (for display)
@@ -129,17 +130,16 @@ class SymbolWorker(threading.Thread):
             logger.info("[%s] insufficient index candles", self.symbol)
             return
 
-        # Fresh-entry gate (while FLAT): the CANDIDATE leg's own H4/M5/M15 slopes, chosen by the
-        # INDEX H4 direction (H4 both +ve -> CE candidate; both -ve -> PE candidate).
+        # Fresh-entry gate (while FLAT): the CANDIDATE leg's own slopes, chosen by the INDEX direction
+        # — H4 decisive, else H1 (grey backup). Must match the strategy's idx_dir so the leg we FETCH
+        # is the one the gate evaluates (dir > 0 -> CE candidate; dir < 0 -> PE candidate).
         cand_leg_slopes = {}
         if not self.active:
-            _h4 = slopes.get("H4", {})
-            _h4r = (_h4.get("rsi") or {}).get("sign", 0)
-            _h4m = (_h4.get("macd") or {}).get("sign", 0)
+            _dir = self.strategy._decisive(slopes, "H4") or self.strategy._decisive(slopes, "H1")
             _cand = None
-            if _h4r > 0 and _h4m > 0:
+            if _dir > 0:
                 _cand = (self._get_display_pair() or {}).get("CE_Symbol")
-            elif _h4r < 0 and _h4m < 0:
+            elif _dir < 0:
                 _cand = (self._get_display_pair() or {}).get("PE_Symbol")
             if _cand:
                 cand_leg_slopes = self._candidate_leg_slopes(_cand)
@@ -177,6 +177,7 @@ class SymbolWorker(threading.Thread):
         ad["close_threshold"] = close_threshold
         ad["exit_allowed"] = exit_allowed
         ad["min_hold_left"] = min_hold_left
+        self._last_exit_reason = ad.get("exit_reason")   # carried into the close log (why we closed)
         self._execute(buy_signal, sell_signal)
         try:
             write_signal_state(self.symbol,
@@ -361,7 +362,8 @@ class SymbolWorker(threading.Thread):
             log_strategy_event(self.symbol, self.active["side"], "CLOSE_FAIL", qty=net)
             return
         self.pending_close = True
-        log_strategy_event(self.symbol, self.active["side"], "CLOSE_SENT", qty=net, details=leg_sym)
+        log_strategy_event(self.symbol, self.active["side"], "CLOSE_SENT", qty=net,
+                           details=f"{leg_sym} reason={self._last_exit_reason or '?'}")
 
     def _confirm_close(self) -> None:
         leg_sym = self.active["symbol"]
@@ -379,7 +381,8 @@ class SymbolWorker(threading.Thread):
         net_pl = self.ctx.tracker.record_close(leg_sym, exit_px, charges)
         log_strategy_event(self.symbol, self.active["side"], "CLOSE_BOOKED",
                            pl=round(net_pl, 2),
-                           details=f"{leg_sym} net=Rs{round(net_pl, 2)} tax=Rs{round(charges, 2)}")
+                           details=f"{leg_sym} reason={self._last_exit_reason or '?'} "
+                                   f"net=Rs{round(net_pl, 2)} tax=Rs{round(charges, 2)}")
         self.active = None
         self.pending_close = False
         self._last_pair = None
@@ -452,6 +455,19 @@ class SymbolWorker(threading.Thread):
         }
         return rsi_slope, macd_slope, rsi_graph, macd_graph
 
+    def _slope_signs(self, df):
+        """RSI + MACD-histogram latest-pivot slope dicts ONLY (no dashboard graph payload) — for
+        timeframes used purely as decision backups (index M1/M15/H1, leg M1, candidate H1/M1)."""
+        rsi_s = self.indicator.calculate_rsi(df["Close"], RSI_LENGTH, RSI_MA_TYPE)
+        macd_df = self.indicator.calculate_macd(df["Close"], MACD_FAST, MACD_SLOW, MACD_SIGNAL)
+        rsi_slope = self.indicator.latest_pivot_slope(
+            rsi_s, lookback=PEAK_LOOKBACK, width=PIVOT_WIDTH, ob_level=RSI_PEAK_OB, os_level=RSI_PEAK_OS)
+        sig = float(macd_df["signal"].iloc[-1]) if len(macd_df) else 0.0
+        macd_side = "high" if sig > 0 else ("low" if sig < 0 else None)
+        macd_slope = self.indicator.latest_pivot_slope(
+            macd_df["hist"], lookback=PEAK_LOOKBACK, width=PIVOT_WIDTH, side=macd_side)
+        return rsi_slope, macd_slope
+
     def _slopes_and_rsi(self):
         """INDEX per-TF RSI (ladder tiers) + RSI/MACD latest-pivot slopes + dashboard series,
         computed on the MAIN INDEX (drives OPEN entry + the ladder-add gate + the entry veto).
@@ -468,12 +484,15 @@ class SymbolWorker(threading.Thread):
                 continue
             rsi_s = self.indicator.calculate_rsi(df["Close"], RSI_LENGTH, RSI_MA_TYPE)
             rsi_mtf[tf] = float(rsi_s.iloc[-1]) if len(rsi_s) else 50.0
+            key = tf.replace("TIMEFRAME_", "")
             if tf in SLOPE_TIMEFRAMES:
                 rsl, msl, rg, mg = self._slope_and_graph(df)
-                key = tf.replace("TIMEFRAME_", "")
                 slopes[key] = {"rsi": rsl, "macd": msl}
                 rsi_graphs[key] = rg
                 macd_graphs[key] = mg
+            else:                                    # M1/M15/H1 — signs only, for the grey backups
+                rsl, msl = self._slope_signs(df)
+                slopes[key] = {"rsi": rsl, "macd": msl}
         return rsi_mtf, slopes, rsi_graphs, macd_graphs
 
     def _leg_slopes(self):
@@ -502,17 +521,20 @@ class SymbolWorker(threading.Thread):
                 rsi_graphs[key] = rg
                 macd_graphs[key] = mg
                 raw[key] = self._raw_slope(df)   # OB/OS-unbounded variant → force-close grey fallback
+            else:                                # M1 — signs only, for the booking M5→M1 grey backup
+                rsl, msl = self._slope_signs(df)
+                slopes[key] = {"rsi": rsl, "macd": msl}
         return slopes, rsi_mtf, rsi_graphs, macd_graphs, raw
 
     def _candidate_leg_slopes(self, cand_sym):
-        """Slopes on a CANDIDATE option leg (H4/M5/M15), computed while FLAT to gate a fresh entry.
-        Cached per bar like the active-leg slopes."""
+        """Slope signs on a CANDIDATE option leg, computed while FLAT to gate a fresh entry — the
+        OPEN_LEG_TIMEFRAMES set (H4·H1·M5·M1): H4+M5 are the gates, H1+M1 the grey backups."""
         out = {}
         for tf in OPEN_LEG_TIMEFRAMES:
             df = self._frame(cand_sym, tf)
             if df is None or len(df) == 0:
                 continue
-            rsl, msl, _, _ = self._slope_and_graph(df)
+            rsl, msl = self._slope_signs(df)
             out[tf.replace("TIMEFRAME_", "")] = {"rsi": rsl, "macd": msl}
         return out
 
