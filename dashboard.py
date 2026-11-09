@@ -614,15 +614,9 @@ def symbol_panel(symbol, s, closes, oh=None, events=None, show_avg=False,
             html.Span(f"net ₹{n:,.2f}", style={"color": _pl_color(n), "fontSize": "14px",
                       "fontWeight": "800", "marginLeft": "auto"}),
         ], style={"display": "flex", "alignItems": "center", "marginBottom": "8px", "flexWrap": "wrap", "rowGap": "6px"})
-        profit_card = _card([_title(f"Profit per position — {view_label} (net, after tax)"),
+        profit_card = _card([_title(f"Profit per position — {view_label} (net + cumulative, after tax)"),
                              per_position_chart(symbol, closes)], pad="8px")
-        analysis = html.Details([
-            html.Summary("▸ Cumulative P/L", style={"cursor": "pointer", "color": C["dim"],
-                         "fontSize": "12px", "fontWeight": "700", "padding": "6px 2px"}),
-            _card([_title("Cumulative net & drawdown"), cumulative_chart(symbol, closes)], pad="8px",
-                  extra={"marginTop": "6px"}),
-        ])
-        return html.Div([header, price_card, profit_card, analysis],
+        return html.Div([header, price_card, profit_card],
                         style={"marginBottom": "18px", "borderBottom": f"1px solid {C['border']}",
                                "paddingBottom": "12px"})
 
@@ -659,24 +653,15 @@ def symbol_panel(symbol, s, closes, oh=None, events=None, show_avg=False,
               pad="8px", extra={"flex": "1.25 1 360px", "minWidth": "0"}),
     ], style={"display": "flex", "gap": "12px", "flexWrap": "wrap", "marginBottom": "10px"})
 
-    # ANALYSIS (collapsed by default — pair, entry meters, RSI, full pivot charts, cumulative P/L)
-    grids = [_pivot_grid(s.get("rsi_graphs"), s.get("macd_graphs"), "INDEX pivot slopes (entry)")]
-    leg_rg, leg_mg = s.get("leg_rsi_graphs"), s.get("leg_macd_graphs")
-    if leg_rg or leg_mg:
-        grids.append(_pivot_grid(leg_rg, leg_mg,
-                     f"LEG {(pos or {}).get('side','')} pivot slopes (ladder / force-close)"))
-    analysis = html.Details([
-        html.Summary("▸ Analysis — pair · entry meters · RSI · full RSI/MACD pivots · cumulative P/L",
-                     style={"cursor": "pointer", "color": C["dim"], "fontSize": "12px",
-                            "fontWeight": "700", "padding": "6px 2px"}),
+    # ANALYSIS (always visible — pair, entry scores, RSI). Slope mini-charts + cumulative removed:
+    # the compact 3-way slopes (above) and the per-position chart's cumulative line now cover them.
+    analysis = _card([
+        _title("ANALYSIS — pair · entry scores · RSI"),
         _pair_block(s.get("pair")),
         html.Div(style={"height": "8px"}),
         _slope_block(s),
         _rsi_block(s.get("rsi", {})),
-    ] + grids + [
-        _card([_title("Cumulative net & drawdown"), cumulative_chart(symbol, closes)], pad="8px",
-              extra={"marginTop": "6px"}),
-    ], style={"marginTop": "4px"})
+    ], extra={"marginTop": "4px"})
 
     return html.Div([header, price_card, mid, analysis],
                     style={"marginBottom": "18px", "borderBottom": f"1px solid {C['border']}",
@@ -747,43 +732,24 @@ def _booking_series(closes):
 
 
 def per_position_chart(asset, closes):
-    """SIMPLE 'each position & what it earned, when': one coloured bar per closed cycle (net ₹
-    after tax), labelled with the amount, time on the x-axis. Replaces the bulky 2-row chart."""
+    """Each position & what it earned, when: one coloured BAR per closed cycle (net ₹ after tax),
+    plus a LINE showing the cumulative running total — both on the same ₹ axis."""
     labels, profits, colors, cum, peaks, hover = _booking_series(closes)
     fig = go.Figure()
     if closes:
-        fig.add_trace(go.Bar(x=labels, y=profits, marker=dict(color=colors),
+        fig.add_trace(go.Bar(x=labels, y=profits, marker=dict(color=colors), name="per position",
                              text=[f"₹{p:,.0f}" for p in profits], textposition="outside",
                              textfont=dict(size=9, color=C["dim"]), cliponaxis=False,
-                             hovertext=hover, hoverinfo="text", showlegend=False))
+                             hovertext=hover, hoverinfo="text"))
+        fig.add_trace(go.Scatter(x=labels, y=cum, mode="lines+markers", name="cumulative",
+                             line=dict(color=C["blue"], width=2, shape="spline"),
+                             marker=dict(size=4, color=C["blue"], line=dict(width=1, color=C["bg"])),
+                             hovertext=[f"cumulative ₹{v:,.2f}" for v in cum], hoverinfo="text"))
     fig.add_hline(y=0, line_dash="dot", line_color=C["muted"], opacity=0.5)
-    fig.update_layout(height=190, autosize=True, margin=dict(l=40, r=12, t=14, b=20),
+    fig.update_layout(height=210, autosize=True, margin=dict(l=40, r=12, t=22, b=20),
                       paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                      font=dict(color=C["dim"], size=10), bargap=0.45)
-    fig.update_xaxes(showgrid=False, tickfont=dict(size=8, color=C["muted"]))
-    fig.update_yaxes(showgrid=True, gridcolor=C["grid"], zeroline=True,
-                     zerolinecolor=C["muted"], tickfont=dict(size=9, color=C["muted"]))
-    return dcc.Graph(figure=fig, config={"displayModeBar": False, "responsive": True}, style={"width": "100%"})
-
-
-def cumulative_chart(asset, closes):
-    """Cumulative net P/L + peak/drawdown line — moved to the (collapsed) Analysis section."""
-    labels, profits, colors, cum, peaks, hover = _booking_series(closes)
-    fig = go.Figure()
-    if closes:
-        cc = C["green"] if (cum[-1] if cum else 0) >= 0 else C["red"]
-        fig.add_trace(go.Scatter(x=labels, y=peaks, mode="lines",
-                                 line=dict(color=C["amber"], width=1.2, dash="dot"),
-                                 name="peak", showlegend=False, hoverinfo="skip"))
-        fig.add_trace(go.Scatter(x=labels, y=cum, mode="lines+markers",
-                                 line=dict(color=cc, width=2, shape="spline"),
-                                 marker=dict(size=5, color=cc, line=dict(width=1, color=C["bg"])),
-                                 fill="tozeroy", fillcolor="rgba(124,58,237,0.06)",
-                                 name="cum net", showlegend=False, hoverinfo="skip"))
-    fig.add_hline(y=0, line_dash="dot", line_color=C["muted"], opacity=0.5)
-    fig.update_layout(height=170, autosize=True, margin=dict(l=40, r=12, t=10, b=20),
-                      paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                      font=dict(color=C["dim"], size=10))
+                      font=dict(color=C["dim"], size=10), bargap=0.45,
+                      legend=dict(orientation="h", y=1.18, x=0, font=dict(size=9), bgcolor="rgba(0,0,0,0)"))
     fig.update_xaxes(showgrid=False, tickfont=dict(size=8, color=C["muted"]))
     fig.update_yaxes(showgrid=True, gridcolor=C["grid"], zeroline=True,
                      zerolinecolor=C["muted"], tickfont=dict(size=9, color=C["muted"]))
