@@ -55,7 +55,9 @@ _FC_HASH = (hashlib.sha256(os.environ["FORCE_CLOSE_PASSWORD"].encode()).hexdiges
 IS_DEMO = True   # demo-branch header tag (set False on fyers_live)
 SHOW_AVG_POSITION = True   # netting branches draw the averaged open/close (blue/orange/yellow)
 
-C = {
+# ── Theme palettes (dashboard auto-switches light/dark by the IST clock) ─────
+# Mirrors the health_check dashboard: light 06:00–18:00 IST, dark otherwise.
+THEME_DARK = {
     "bg": "#0a0e17", "card": "#141a28", "card2": "#1a2133", "border": "#232c42",
     "text": "#e6e9f2", "dim": "#93a0bd", "muted": "#5b6680",
     "green": "#22c55e", "red": "#ef4444", "grey": "#6b7280",
@@ -63,6 +65,48 @@ C = {
     "orange": "#fb923c", "yellow": "#facc15",
     "grid": "rgba(140,150,180,0.08)",
 }
+THEME_LIGHT = {
+    "bg": "#f4f6fb", "card": "#ffffff", "card2": "#eef1f7", "border": "#dbe1ec",
+    "text": "#161c2d", "dim": "#566072", "muted": "#8a93a8",
+    "green": "#16a34a", "red": "#dc2626", "grey": "#6b7280",
+    "amber": "#d97706", "purple": "#7c3aed", "blue": "#2563eb", "teal": "#0d9488",
+    "orange": "#ea580c", "yellow": "#ca8a04",
+    "grid": "rgba(80,90,120,0.14)",
+}
+DAY_START_HOUR, DAY_END_HOUR = 6, 18        # light window (IST, 24h)
+# `C` is mutated in place by _apply_theme() so every builder that reads C[...]
+# at call time re-colours itself when the theme flips — no per-widget rewiring.
+C = dict(THEME_DARK)
+
+
+def _theme_name() -> str:
+    """'light' during the day window, 'dark' otherwise — by IST wall clock."""
+    return "light" if DAY_START_HOUR <= now_ist().hour < DAY_END_HOUR else "dark"
+
+
+def _apply_theme() -> None:
+    C.clear()
+    C.update(THEME_LIGHT if _theme_name() == "light" else THEME_DARK)
+
+
+def _page_style() -> dict:
+    """Root container style — themed so the page background flips with the clock."""
+    return {"maxWidth": "1400px", "margin": "0 auto", "padding": "26px",
+            "fontFamily": "Inter, system-ui, sans-serif",
+            "background": C["bg"], "color": C["text"], "minHeight": "100vh"}
+
+
+def _titlebar():
+    """Title + DEMO/LIVE badge — rebuilt each refresh so the text colour re-themes."""
+    return [
+        html.H2("Ballom Fyers", style={"color": C["text"], "margin": "0"}),
+        html.Span("DEMO" if IS_DEMO else "LIVE",
+                  style={"color": C["amber"] if IS_DEMO else C["red"], "fontWeight": "800",
+                         "marginLeft": "12px", "fontSize": "13px"}),
+    ]
+
+
+_apply_theme()      # colour the initial import-time layout for the current clock
 RSI_ORDER = ["TIMEFRAME_M1", "TIMEFRAME_M5", "TIMEFRAME_M15", "TIMEFRAME_M30",
              "TIMEFRAME_H1", "TIMEFRAME_H4", "TIMEFRAME_H6"]
 RSI_LABEL = {"TIMEFRAME_M1": "1m", "TIMEFRAME_M5": "5m", "TIMEFRAME_M15": "15m",
@@ -907,10 +951,7 @@ app = dash.Dash(__name__, title="fyers dashboard")
 app.layout = html.Div([
     dcc.Interval(id="tick", interval=REFRESH_MS, n_intervals=0),
     html.Div([
-        html.H2("Ballom Fyers", style={"color": C["text"], "margin": "0"}),
-        html.Span("DEMO" if IS_DEMO else "LIVE",
-                  style={"color": C["amber"] if IS_DEMO else C["red"], "fontWeight": "800",
-                         "marginLeft": "12px", "fontSize": "13px"}),
+        html.Div(id="titlebar", style={"display": "flex", "alignItems": "center"}),
         html.Div([
             html.Span("View date", style={"color": C["muted"], "fontSize": "11px", "marginRight": "8px"}),
             dcc.Dropdown(id="viewdate", options=_recent_dates(), value=_today_iso(),
@@ -920,15 +961,15 @@ app.layout = html.Div([
     html.Div([
         dcc.Input(id="fc-pass", type="password", placeholder="force-close password",
                   style={"width": "170px", "padding": "5px 8px", "borderRadius": "5px",
-                         "border": f"1px solid {C['border']}", "background": C["card"],
-                         "color": C["text"], "fontSize": "12px", "marginRight": "10px"}),
+                         "border": "1px solid #cbd3e1", "background": "#ffffff",
+                         "color": "#161c2d", "fontSize": "12px", "marginRight": "10px"}),
         html.Div(id="fc-feedback", style={"color": C["amber"], "fontSize": "12px", "fontWeight": "700"}),
         html.Div(style={"flex": "1"}),
         *([
             dcc.Input(id="addbal-amt", type="number", min=0, step=1000, placeholder="amount ₹",
                       style={"width": "120px", "padding": "5px 8px", "borderRadius": "5px",
-                             "border": f"1px solid {C['border']}", "background": C["card"],
-                             "color": C["text"], "fontSize": "13px"}),
+                             "border": "1px solid #cbd3e1", "background": "#ffffff",
+                             "color": "#161c2d", "fontSize": "13px"}),
             html.Button("＋ Add demo balance", id="addbal-btn", n_clicks=0,
                         style={"marginLeft": "8px", "background": C["teal"], "color": "#06281f",
                                "border": "none", "borderRadius": "5px", "padding": "6px 12px",
@@ -943,8 +984,7 @@ app.layout = html.Div([
     html.Div(id="symbols", style={"marginTop": "18px"}),
     html.Div(id="log", style={"marginTop": "16px"}),
     html.Div(id="api_limits", style={"marginTop": "16px"}),
-], style={"maxWidth": "1400px", "margin": "0 auto", "padding": "26px",
-          "fontFamily": "Inter, system-ui, sans-serif", "background": C["bg"], "minHeight": "100vh"})
+], id="page", style=_page_style())
 
 
 @app.callback(
@@ -959,11 +999,13 @@ def _sync_viewdate(_, cur):
 
 
 @app.callback(
+    Output("page", "style"), Output("titlebar", "children"),
     Output("status", "children"), Output("kpis", "children"), Output("api", "children"),
     Output("symbols", "children"), Output("log", "children"), Output("api_limits", "children"),
     Input("viewdate", "value"), Input("tick", "n_intervals"),
 )
 def _refresh(view_date, _):
+    _apply_theme()      # re-colour the global palette for the current IST hour
     today = _today_iso()
     view = view_date or today
     historical = view != today
@@ -1001,7 +1043,8 @@ def _refresh(view_date, _):
         if not panels:
             panels = [html.Div("Waiting for engine signals…", style={
                 "color": C["muted"], "padding": "28px", "textAlign": "center"})]
-    return (status_strip(view, historical), kpi_row(view, historical), api_panel(),
+    return (_page_style(), _titlebar(),
+            status_strip(view, historical), kpi_row(view, historical), api_panel(),
             panels, log_table(view), api_limits_panel())
 
 
