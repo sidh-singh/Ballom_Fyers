@@ -3,180 +3,177 @@
 > **Status:** 🟢 Implemented
 > **Source of truth:** Alcadeias MT5 bot, branch `rsimacd_btcusd1_wd_exp_h`
 > (`C:/Users/sings213/Alcadeias/Alcadeias`) — the **RSI+MACD slope** strategy
-> (SHA removed), reproduced exactly, adapted from MT5 **hedging** to Fyers
-> **netting** (buy-only, clubbed & averaged).
-> **Variant A (NETTING):** profit booked on a **BOOK-score reversal** above a
-> tax-aware floor. The sibling `fyers_hedging_*` branches use a fixed ₹ target
-> instead (variant B) — everything else is identical.
-> **Last updated:** 2026-11-03
+> (SHA removed), adapted from MT5 **hedging** to Fyers **netting** (buy-only).
+> **Variant A (NETTING):** profit booked on a **downward M5 reversal** above a
+> tax-aware ₹ floor; the sibling `fyers_hedging_*` branches book at a fixed ₹
+> target (variant B). Everything else — entry, force-close, DCA ladder — is identical.
+> **Last updated:** 2026-11-10
 
 This documents *what* the strategy does. See [ARCHITECTURE.md](ARCHITECTURE.md)
 for the engine it plugs into. Every change is logged in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
-## 1. The RSI+MACD slope strategy (exactly as Alcadeias)
+## 0. The unified CE/PE model (read this first)
 
-No SHA. Direction is read from **latest-pivot slopes** of RSI and the MACD
-histogram across several timeframes, combined into three **per-section weighted
-scores** that drive entry, force-close and the profit book. A mean-reversion
-**Fibonacci DCA ladder** (RSI extremes) averages into an open basket.
+The account is **buy-only**: a bullish view is a **long CE**, a bearish view a **long PE**.
+**Both legs are long options** — each profits when its **own premium rises** — and the
+self-tracked P&L is long-only (`cycle_pl = ltp×net_qty − cost_basis`; the stored `side` is
+ignored). So **every per-leg rule is identical for CE and PE**: add on the leg's own dips,
+book/force-close when the leg's own momentum turns down. The only place direction matters is
+*picking* CE vs PE (from the index) and *borrowing* the index as a backup, where a **polarity**
+applies: a CE tracks the index (`pol = +1`), a PE is inverse (`pol = −1`, i.e. `−index`).
 
-### 1.1 Indicators (`indicator.py`, reproduced verbatim)
+> A long PE rises when the index **falls** — standard negative-delta. Earlier builds mistakenly
+> *mirrored* the BUY↔SELL thresholds on the PE's own chart (an index-era habit), so a PE had no
+> real stop, booked on continuation, and averaged into highs. Fixed 2026-11-10 — see CHANGELOG.
+
+### The decision unit — `_decisive(tf)` + fallback chains
+A timeframe **counts only when BOTH its RSI and MACD latest-pivot slopes agree** →
+`_decisive` returns **+1** (both up) / **−1** (both down) / **0** (grey *or* mismatch). A `0`
+is "no read" → the caller **walks a fallback chain**: the **leg's own** finer timeframe, then the
+**index** (polarity-adjusted). This replaces the old same-TF `grey_fill` indicator-borrow.
+
+---
+
+## 1. The RSI+MACD slope strategy
+
+### 1.1 Indicators (`indicator.py`)
 | Indicator | Config | Purpose |
 |---|---|---|
 | **RSI** | `RMA`, length **14** | DCA ladder tiers + RSI pivot slopes |
-| **MACD** | TV `ta.macd` **12 / 26 / 9** (SMA-seeded EMA) → `macd, signal, hist` | MACD-histogram pivot slopes |
+| **MACD** | TV `ta.macd` **12 / 26 / 9** → `macd, signal, hist` | MACD-histogram pivot slopes |
 | **latest_pivot_slope** | lookback **20**, pivot width **2** | sign (+/−/0) of the newest confirmed pivot → now |
 
-**latest_pivot_slope** scans back from the newest *confirmable* bar and returns the
-**first** turning point (the latest pivot, not the largest): a bar strictly above
-(high) / below (low) the `width=2` bars on both sides. Slope =
-`(current − pivot_value) / bars_since_pivot`; `sign` = +1 / −1 / 0.
-- **RSI** pivots only count inside the OB/OS bands: a HIGH needs value ≥ **`RSI_PEAK_OB=60`**,
-  a LOW needs value ≤ **`RSI_PEAK_OS=40`** (neutral 41–59 wiggles ignored).
-- **MACD** histogram is unbounded; the **signal line's sign picks the side** —
-  `signal > 0` → read the HIGH side, `signal < 0` → the LOW side.
+`latest_pivot_slope` scans back from the newest *confirmable* bar for the **first** turning point
+(a bar strictly above/below the `width=2` bars each side); `slope = (current − pivot)/bars`,
+`sign = +1/−1/0`. **RSI** pivots count only inside the bands (HIGH ≥ `RSI_PEAK_OB=60`, LOW ≤
+`RSI_PEAK_OS=40`); the **MACD** signal-line sign picks the side. A monotonic run with no pivot → `0`.
 
-**Two slope sources (2026-11-04).** OPEN (entry + the ladder-add gate + the entry
-agreement-gate veto) reads the **main index** (`SLOPE_TIMEFRAMES` = M5, M15, H4). The
-**BOOK and FORCE-CLOSE exits** read the **active CE/PE leg's OWN option candles**
-(`LEG_SLOPE_TIMEFRAMES` = M5, M15) — so profit-booking and force-close follow the premium
-you actually hold, not the index. Anti-vibration: after an entry, both exits are suppressed
-for `MIN_HOLD_SECONDS` (180 s) so a basket can never open-then-close on a stale leg pivot.
+**Slope sources (2026-11-10).** The **INDEX** computes slope signs for **all fetched TFs**
+(`M1·M5·M15·H1·H4` — the frames are already pulled for the ladder RSI, so it's free). The **active
+leg** (CE/PE option's own candles) computes `M5·M15·H1·H4` (+ `M1`). While flat, the **candidate
+leg** fetches `OPEN_LEG_TIMEFRAMES = H4·H1·M5·M1` (H4+M5 gate, H1+M1 the grey backups). Anti-vibration:
+after an entry, book + force-close are suppressed for `MIN_HOLD_SECONDS` (180 s).
 
-### 1.2 Per-section weighted scores (`strategy._weighted_score`)
-Each decision **section** has its own `{timeframe: weight}` map; its score is the RAW
-weighted sum of the latest-pivot signs, range **±(2·Σ|weight|)**:
-
-```
-score = Σ_tf  weight_tf · (rsi_sign_tf + macd_sign_tf)      each sign ∈ {−1, 0, +1}
-```
-
-| Section | Weights | Range | Threshold | Source | Used for |
-|---|---|---|---|---|---|
-| **OPEN** | `{H4:1, M5:1}` | ±4 | `ENTRY_S=2`, `LADDER_S=2` | **index** | fresh entry + ladder-add gate |
-| **BOOK** | `{M5:1}` | ±2 | `BOOK_S=2` | **leg** | profit book — **both** M5 slopes reverse |
-| **FORCE_CLOSE** | `{M15:1}` | ±2 | `FORCE_CLOSE_S=1` | **leg** (exit) / **index** (entry gate) | force-close — **either** M15 slope reverses |
-
-**grey_fill** (OPEN + BOOK only): if exactly one of a timeframe's two signs is 0
-(its RSI or MACD is at a peak/plateau — pivot undefined), the grey sign borrows the
-other indicator's direction, so a TF clear on one indicator counts as a **full**
-aligned vote (±2·w) instead of half. Both grey → the TF stays 0. FORCE_CLOSE uses
-**raw** signs (no grey_fill).
-
-> **BOOK = both, FORCE_CLOSE = either.** With `BOOK={M5:1}` and `BOOK_S=2`, a book needs the
-> M5 score at ±2 — i.e. **both** the M5 RSI and MACD slopes reversed (a plateau on one borrows
-> the other via grey_fill). With `FORCE_CLOSE={M15:1}` and `FORCE_CLOSE_S=1`, a force-close fires
-> at M15 score ±1 — i.e. **either** the M15 RSI or MACD slope turning the net M15 slope adverse.
+### 1.2 The ladder-add trend filter (`open_score`)
+The only remaining **weighted** score. `open_score = Σ weight·(rsi+macd)` over `{H4:1, M5:1}` on the
+**index** (±4, `grey_fill` kept here as a coarse filter). It gates **averaging only**: an add is
+allowed while the index is not strongly adverse (`buy_add_ok = open_score > −LADDER_S`, `LADDER_S=2`).
+It does **not** decide entry or exit anymore.
 
 ### 1.3 Signals
 `DO_NOTHING, BUY, SELL, CLOSE_BUY, CLOSE_SELL, BUY_MORE, SELL_MORE`.
 
-**Entry (only when FLAT — both legs 0) — the agreement gate:**
-- `BUY`  if `open_score ≥ +ENTRY_S` **and** `fc_score ≥ +ENTRY_AGREE_S` (`=0`).
-- `SELL` if `open_score ≤ −ENTRY_S` **and** `fc_score ≤ −ENTRY_AGREE_S`.
-- else **WAIT**. When OPEN wants in but FORCE-CLOSE opposes (chop), the bot WAITS
-  rather than open-then-instantly-force-close (`entry_chop_block` telemetry).
-- **Cooldown:** a fresh entry is blocked for **`REENTRY_COOLDOWN_SECONDS=300`** after
-  any close (`entry_allowed=False`).
+**Fresh entry (only when FLAT).** Direction from the index, then the candidate leg must be
+**advancing** on two timeframes (each via its own fallback chain; `+1` = advancing):
 
-**Ladder / DCA (one side open) — max 6 positions.** Exits are checked FIRST (close
-beats add); the add is gated so it only averages in while OPEN is **not** strongly
-adverse (`buy_add_ok = open_score > −LADDER_S`):
+| Step | Resolution chain (stop at first decisive) |
+|---|---|
+| **Direction** (picks CE/PE) | index **H4** → index **H1** |
+| **H4 confirm** | leg **H4** → leg **H1** → index **H1**·pol |
+| **M5 confirm** | leg **M5** → index **M5**·pol → leg **M1** → index **M1**·pol |
 
-| Position count | Add trigger (BUY side) | Action |
+`BUY` (open CE) when direction = bullish **and** both confirms = +1; `SELL` (open PE) when
+bearish **and** both confirms = +1; else **WAIT**. Cooldown: a fresh entry is blocked for
+`REENTRY_COOLDOWN_SECONDS = 600` after any close.
+
+**Force-close = trend-reversal stop (identical for CE & PE).** A weighted multi-timeframe reversal
+of the **active leg's own** chart; where a leg TF is grey, the **index** same-TF is borrowed
+(polarity-adjusted):
+
+```
+fc_score = Σ_tf  weight_tf · 2 · resolve(leg_decisive(tf)  else  index_decisive(tf)·pol)
+weights  = {M15:4, H1:3, H4:2}      range ±18      fire at fc_score ≤ −FORCE_CLOSE_S (=12)
+```
+
+Both a long CE and a long PE close when the option turns **down** (`fc ≤ −12`). A single-TF wobble
+can't fire it (needs e.g. M15+H1 or M15+H4 reversed); **if every TF is grey on leg *and* index →
+`0` → HOLD** (no twitch — this removed the old leg-M5 hair-trigger that churned thin commodity legs).
+
+**DCA ladder (one side open) — max 6 positions.** Exits are checked first (close beats add); the add
+is `open_score`-gated (above). Tiers read the **active leg's OWN RSI**, and **both CE and PE average
+in on the leg's dips** (oversold):
+
+| Position count | Add trigger (CE **and** PE) | Action |
 |---|---|---|
-| profit book (checked first) | `cycle_pl > floor` **and** `book_score ≤ −BOOK_S` | `CLOSE_BUY` (reason `book`) |
-| force-close (checked next) | `fc_score ≤ −FORCE_CLOSE_S` | `CLOSE_BUY` (reason `force_close`) |
-| 1 | RSI **M1** ≤ 35 | `BUY_MORE` |
-| 2 | RSI **M5** ≤ 35 | `BUY_MORE` |
-| 3 | RSI **M15** ≤ 35 | `BUY_MORE` |
-| 4 | RSI **H1** ≤ 35 | `BUY_MORE` |
-| 5 | RSI **H4** ≤ 35 | `BUY_MORE` |
+| book (first) | `cycle_pl > ₹ floor` **and** M5 reversal (§1.5) | `CLOSE_*` (reason `book`) |
+| force-close (next) | `fc_score ≤ −FORCE_CLOSE_S` | `CLOSE_*` (reason `force_close`) |
+| 1 | leg RSI **M1** ≤ 35 | `*_MORE` |
+| 2 | leg RSI **M5** ≤ 35 | `*_MORE` |
+| 3 | leg RSI **M15** ≤ 35 | `*_MORE` |
+| 4 | leg RSI **H1** ≤ 35 | `*_MORE` |
+| 5 | leg RSI **H4** ≤ 35 | `*_MORE` |
 
-SELL side is the mirror (RSI ≥ 65; `fc_score ≥ +FORCE_CLOSE_S`; `book_score ≥ +BOOK_S`).
-After 5 adds (6 positions) there are no further ladder tiers — the basket is held
-until the book or force-close fires. There is **no H6 final-close** (that was the HAM
-design); force-close replaces it.
+After 5 adds (6 positions) the basket is held until the book or force-close. No H6 final-close.
 
 ### 1.4 Fibonacci volume ladder
-Unchanged from the Fyers base. Positions are opened as the fib sequence
-`[1,2,3,5,8,13,…] × base`: **entry** = `1 × base`, **adds** = `2,3,5,8,13 × base`
-(`FIB[mg+1] × units × lot` in `symbol_worker._add_leg`). `base` scales with the
-running **unit** (§3).
+Positions follow the fib sequence `[1,2,3,5,8,13,…] × base`: **entry** = `1 × base`, **adds** =
+`2,3,5,8,13 × base` (`FIB[mg+1] × units × lot` in `symbol_worker._add_leg`). `base` scales with
+the running **unit** (§3).
 
-### 1.5 Profit booking — **variant A (BOOK-score reversal)**
-Close the whole basket when it is **in profit above a floor AND momentum reverses**:
+### 1.5 Profit booking — **variant A (M5 reversal above a ₹ floor)**
+Book the whole basket when it is **in profit past the floor AND** the active leg's **M5 momentum
+reverses down** (so winners run until momentum turns, and every book is net-positive):
 
 ```
-buy_pp  = (cycle_pl > close_threshold)  AND  (book_score ≤ −BOOK_S)   → CLOSE_BUY ('book')
+cycle_pl > close_threshold   AND   book_rev < 0          → CLOSE_* (reason 'book')
+close_threshold = HEDGE_PER_UNIT × units + estimated charges        (the tax-aware ₹ floor)
+book_rev        = resolve( leg_decisive(M5)  else  index_decisive(M5)·pol )   # −1 = reversing down
 ```
 
-- `close_threshold = ₹(HEDGE_PER_UNIT × units) + charges` with **`HEDGE_PER_UNIT=300`**
-  → the floor is **+₹300 NET per unit plus estimated taxes/charges** (§4; ~10–15 NIFTY points
-  on 1 lot), so a book only fires once the basket is **net-positive by ≥ ₹300×units** AND the
-  BOOK score has reversed **on the LEG**: with `BOOK={M5:1}` + `BOOK_S=2`, that means **both**
-  the leg's M5 RSI and MACD slopes have turned against the basket (book_score ≤ −2).
-- `book_score`/`fc_score` are read on the **active CE/PE option's own M5/M15 candles** (not the
-  index), and both exits are suppressed for the first `MIN_HOLD_SECONDS` after entry.
-- Checked **before** the force-close, so in profit a book always beats a capitulation.
+- Identical sign for CE and PE (both long); the floor keeps every booked trade **net-positive**.
+- The ₹ floor per unit is **₹500** (`hedge_per_unit` in `symbols.json`). Netting is **not** auto-tuned.
+- Checked **before** the force-close.
 
-> **Variant B (`fyers_hedging_*`)** drops the `book_score` condition and books the
-> moment `cycle_pl > close_threshold` (the fixed ₹300×units+charges target). Force-close still
-> reads the leg. That is the only difference between the two branch pairs.
+> **Variant B (`fyers_hedging_*`)** drops the M5-reversal requirement and books at the ₹ floor as a
+> fixed **target**, which is additionally **auto-tuned daily** (₹100→₹1000). That is the only
+> difference between the branch pairs.
 
 ---
 
-## 2. Hedging → Netting adaptation (buy-only, clubbed & averaged)
-
-Fyers is a **netting**, buy-only options account, so the MT5 hedge is expressed as
-two independent buy-only legs on the **index options**:
+## 2. Hedging → Netting adaptation (buy-only)
 
 | Strategy signal | Fyers action |
 |---|---|
 | `BUY` / `BUY_MORE` / `CLOSE_BUY` | buy / add-average / sell the **CE** leg |
 | `SELL` / `SELL_MORE` / `CLOSE_SELL` | buy / add-average / sell the **PE** leg |
 
-Per-cycle P&L is a **self-tracked cost basis** (carry-safe), not the broker's booked
-field: `cycle_pl = ltp × net_qty − cost_basis` (`position_tracker.py`). `cycle_pl`
-is what the strategy sees as `total_profit`, and the close books
-`net = gross − charges` into `profit_history.json`.
+Per-cycle P&L is a self-tracked cost basis (carry-safe): `cycle_pl = ltp × net_qty − cost_basis`
+(`position_tracker.py`) — long-only, so CE and PE are symmetric. A close books `net = gross −
+charges` into `profit_history.json`, and the close log records **why**: `CLOSE_SENT` / `CLOSE_BOOKED
+… reason=target|book|force_close`.
 
 ---
 
 ## 3. Position sizing — balance-tiered units
-`units = min(floor(balance / STEP_UP_BALANCE) + 1, UNIT_MAX_LIMIT)` with
-`STEP_UP_BALANCE = ₹100,000` and `UNIT_MAX_LIMIT = 10` (per-symbol override in
-`symbols.json`). Units are fixed at entry and drive both the Fibo lot ladder and the
-`close_threshold`/book floor. The per-contract lot comes from the downloaded
-NSE/MCX CSV.
+`units = min(floor(balance / STEP_UP_BALANCE) + 1, UNIT_MAX_LIMIT)` with `STEP_UP_BALANCE =
+₹100,000`, `UNIT_MAX_LIMIT = 10` (per-symbol override in `symbols.json`). Units are fixed at entry
+and drive both the Fibo lot ladder and the `close_threshold`. The per-contract lot comes from the
+downloaded NSE/MCX CSV.
 
-**Strike / expiry scan (`scanner.py`).** A fresh basket picks the best CE + PE within a
-**premium band** `SCAN_MIN_PREMIUM_PER_LOT`…`SCAN_MAX_PREMIUM_PER_LOT` per lot (₹10k–₹30k)
-so we hold near-ATM options with real value/history (not cheap far-OTM); a **round-strike**
-bonus (`SCAN_ROUND_STRIKE_STEP` = ₹1000 → NIFTY 24000/25000/26000) favours the liquid,
-long-history strikes; and the **expiry window** is `SCAN_MIN_DTE`…`SCAN_MAX_DTE` = **7–31 DTE**
-(≥1 week, ≤1 month) with a "nearest ≥ MIN" fallback so gold/silver's monthly still resolves.
-All are per-symbol overridable (`min_premium_per_lot` / `max_premium_per_lot` /
-`round_strike_step`); commodities set `min_premium_per_lot: 0` until their premiums are tuned.
+**Strike / expiry scan (`scanner.py`).** Best CE + PE within a per-lot **premium band**, a
+**round-strike** bonus, and an **expiry window** (`SCAN_*`); commodities set `min_premium_per_lot: 0`
+until tuned. Month-end monthlies are preferred so the option legs have enough M15/H1/H4 history.
 
 ---
 
-## 4. Charges / taxes (tax-aware floor)
-`estimate_trade_charges(qty, price, num_orders)` (`constants.py`, verified against
-fyers.in/charges-list) sums brokerage (₹20, ₹15 Prime), STT 0.15% sell, exchange txn
-0.0355299% (NSE), SEBI ₹10/cr, stamp 0.003% buy, GST 18%. It feeds both the book
-floor and the booked `net_pl`.
+## 4. Charges / taxes (tax-aware, exchange-aware)
+`estimate_trade_charges(qty, price, num_orders, is_commodity=)` (`constants.py`, verified against
+fyers.in/charges-list): brokerage (₹20, ₹15 Prime), **NSE STT 0.15% sell** *or* **MCX CTT 0.05%**
+for commodities, exchange txn (NSE vs MCX rate), SEBI ₹10/cr, stamp 0.003% buy, GST 18%. It feeds
+both the ₹ floor and the booked `net_pl`.
 
 ---
 
-## 5. Data flow per tick (`symbol_worker._tick`)
+## 5. Data flow per tick (`symbol_worker.tick`)
 1. Resolve underlying (commodity future from MCX CSV; index as-is) + trading-window guard.
-2. Close-first: if a close is pending, confirm it (and start the cooldown) before anything else.
+2. Close-first: if a close is pending, confirm it (start the cooldown) before anything else.
 3. `_leg_state_and_threshold()` → leg `buy_pos`/`sell_pos` from cost basis + `close_threshold`.
-4. `_slopes_and_rsi()` → per-TF RSI (ladder tiers) + RSI/MACD latest-pivot slopes
-   (one fetch per TF, **cached per bar** so the DATA budget is respected).
-5. `calculate_signal(... slopes, entry_allowed ...)` → BUY/SELL/ADD/CLOSE + analysis.
-6. `_execute()` maps the signal to the CE/PE leg; the dashboard payload is written
-   (scores, per-TF slope arrows, entry direction, RSI, pair, position).
+4. `_slopes_and_rsi()` (index, all TFs) + `_leg_slopes()` / `_candidate_leg_slopes()` — one fetch
+   per (symbol, TF), **cached per bar** so the DATA budget is respected.
+5. `calculate_signal(...)` → BUY/SELL/ADD/CLOSE + analysis; `_execute()` maps it to the CE/PE leg;
+   the dashboard payload is written (Index/CE/PE slope arrows, entry direction, RSI, pair, position).
+
+_(The hedging branches additionally run a daily ₹-target auto-tuner, `auto_tune.py`; netting does
+not — its `hedge_per_unit` is a book floor, not a tunable target.)_
