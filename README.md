@@ -58,3 +58,7 @@ See [`LINUX_SETUP.md` §7](LINUX_SETUP.md). Each `linux_` branch is **preset to 
 | `install-service.sh` | (re)install the background systemd services |
 | `scripts/common.sh` | shared config — namespaces every bot by instance |
 | `LINUX_SETUP.md` | full beginner guide |
+
+## Dashboard
+
+See **[DASHBOARD.md](DASHBOARD.md)** for running / accessing the dashboard (network + mobile), the automatic light/dark theme, and the Force-close password (including how to reset it).
