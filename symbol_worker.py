@@ -144,6 +144,13 @@ class SymbolWorker(threading.Thread):
             if _cand:
                 cand_leg_slopes = self._candidate_leg_slopes(_cand)
 
+        # Both pair legs' slope signs for the dashboard's index / CE / PE readout — reuse the ACTIVE
+        # leg's already-fetched slopes; fetch only the OTHER leg (one extra set, cached per bar).
+        _pair = self._get_display_pair() or {}
+        _act = self.active["side"] if self.active else None
+        ce_slopes = leg_slopes if _act == "CE" else self._display_leg_slopes(_pair.get("CE_Symbol"))
+        pe_slopes = leg_slopes if _act == "PE" else self._display_leg_slopes(_pair.get("PE_Symbol"))
+
         entry_allowed = (monotonic() - self._last_close_time) >= REENTRY_COOLDOWN_SECONDS
         # Post-entry min-hold: suppress book + force-close until the basket is this old, so it
         # can't open-then-close on a stale leg pivot (anti-vibration). No position → always True.
@@ -163,6 +170,8 @@ class SymbolWorker(threading.Thread):
         )
         ad["rsi_graphs"] = rsi_graphs
         ad["macd_graphs"] = macd_graphs
+        ad["ce_slopes"] = ce_slopes
+        ad["pe_slopes"] = pe_slopes
         ad["leg_rsi_graphs"] = leg_rsi_graphs
         ad["leg_macd_graphs"] = leg_macd_graphs
         ad["close_threshold"] = close_threshold
@@ -507,6 +516,20 @@ class SymbolWorker(threading.Thread):
             out[tf.replace("TIMEFRAME_", "")] = {"rsi": rsl, "macd": msl}
         return out
 
+    def _display_leg_slopes(self, sym):
+        """Slope signs (RSI + MACD) on a leg option over the leg timeframes (M5·M15·H1·H4), for the
+        dashboard's index / CE / PE readout. Cached per bar. {} if no symbol / no candles."""
+        out = {}
+        if not sym:
+            return out
+        for tf in LEG_SLOPE_TIMEFRAMES:
+            df = self._frame(sym, tf)
+            if df is None or len(df) == 0:
+                continue
+            rsl, msl, _, _ = self._slope_and_graph(df)
+            out[tf.replace("TIMEFRAME_", "")] = {"rsi": rsl, "macd": msl}
+        return out
+
     def _raw_slope(self, df):
         """RSI + MACD-histogram latest-pivot slopes with the OB/OS regime boundary REMOVED
         (ob/os=None) — the force-close fallback when the bounded leg slopes are grey (no pivot)."""
@@ -572,6 +595,8 @@ class SymbolWorker(threading.Thread):
             "slope_direction": ad.get("slope_direction", "WAIT"),
             "slopes": _signs(ad.get("slopes")),               # index slopes (open)
             "leg_slopes": _signs(ad.get("leg_slopes")),       # leg slopes (book/fc)
+            "ce_slopes": _signs(ad.get("ce_slopes")),         # CE leg slopes (dashboard readout)
+            "pe_slopes": _signs(ad.get("pe_slopes")),         # PE leg slopes (dashboard readout)
             "entry_allowed": ad.get("entry_allowed", True),
             "entry_chop_block": ad.get("entry_chop_block", False),
             "exit_allowed": ad.get("exit_allowed", True),
