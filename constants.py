@@ -324,16 +324,26 @@ EXCHANGE_TXN_RATE   = 0.000355299  # 0.0355299% on premium, NSE (incl. IPFT) —
 GST_RATE            = 0.18         # 18% on (brokerage + exchange txn + SEBI)
 STAMP_DUTY_RATE     = 0.00003      # 0.003% on BUY premium
 SEBI_PER_CRORE      = 10.0         # ₹10 per crore turnover
+# MCX commodity options (GOLDM/SILVERM) — CTT replaces STT and the MCX exchange-txn rate differs
+# (stamp / SEBI / GST / brokerage are the same as NSE above). Verify vs the current MCX schedule.
+CTT_OPTIONS_RATE      = 0.0005       # 0.05% CTT on SELL premium (MCX commodity options)
+MCX_EXCHANGE_TXN_RATE = 0.000418     # 0.0418% on premium, MCX — per side
 
 
-def estimate_trade_charges(qty, ltp, num_orders: int = 2) -> float:
-    """Estimated round-trip charges (₹) for a Fyers options trade, per the Fyers
-    charges list. num_orders = 2 + martingale_count (entry + exit + each add)."""
+def estimate_trade_charges(qty, ltp, num_orders: int = 2, is_commodity: bool = False) -> float:
+    """Estimated round-trip charges (₹) for a Fyers options trade, per the Fyers charges
+    list. num_orders = 2 + martingale_count (entry + exit + each add).
+    is_commodity=True → MCX commodity options (GOLDM/SILVERM): CTT replaces STT and the MCX
+    exchange-txn rate applies; else NSE equity-index options (NIFTY)."""
     turnover  = abs(qty) * ltp
     brokerage = brokerage_per_order() * num_orders    # ₹20 Standard / ₹15 Prime
-    stt       = STT_OPTIONS_RATE * turnover          # sell side only
-    exchange  = EXCHANGE_TXN_RATE * turnover * 2      # both sides
+    if is_commodity:                                  # MCX commodity options
+        txn_tax  = CTT_OPTIONS_RATE * turnover           # CTT, sell side
+        exchange = MCX_EXCHANGE_TXN_RATE * turnover * 2   # both sides
+    else:                                             # NSE equity-index options
+        txn_tax  = STT_OPTIONS_RATE * turnover           # STT, sell side
+        exchange = EXCHANGE_TXN_RATE * turnover * 2       # both sides
     sebi      = (turnover * 2 / 1_00_00_000) * SEBI_PER_CRORE
     gst       = GST_RATE * (brokerage + exchange + sebi)
     stamp     = STAMP_DUTY_RATE * turnover            # buy side only
-    return round(brokerage + stt + exchange + gst + stamp + sebi, 2)
+    return round(brokerage + txn_tax + exchange + gst + stamp + sebi, 2)
