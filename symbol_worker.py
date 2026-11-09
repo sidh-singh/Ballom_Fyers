@@ -121,8 +121,9 @@ class SymbolWorker(threading.Thread):
                 return
 
         buy_pos, sell_pos, close_threshold, count = self._leg_state_and_threshold()
-        rsi_mtf, slopes, rsi_graphs, macd_graphs = self._slopes_and_rsi()          # INDEX (open)
-        leg_slopes, leg_rsi_graphs, leg_macd_graphs, leg_slopes_raw = self._leg_slopes()   # LEG (book/fc)
+        _idx_rsi, slopes, rsi_graphs, macd_graphs = self._slopes_and_rsi()          # INDEX: OPEN entry + add-gate
+        leg_slopes, leg_rsi_mtf, leg_rsi_graphs, leg_macd_graphs, leg_slopes_raw = self._leg_slopes()  # LEG: ladder RSI + fc/book
+        rsi_mtf = leg_rsi_mtf if self.active else _idx_rsi   # DCA ladder reads the ACTIVE leg's own RSI
         source_df = self._frame(self._active_underlying, "TIMEFRAME_M5")  # price feed / liveness
         if source_df is None or len(source_df) == 0:
             logger.info("[%s] insufficient index candles", self.symbol)
@@ -467,25 +468,32 @@ class SymbolWorker(threading.Thread):
         return rsi_mtf, slopes, rsi_graphs, macd_graphs
 
     def _leg_slopes(self):
-        """LEG slopes — RSI/MACD latest-pivot slopes on the ACTIVE CE/PE option's OWN candles
-        (book = M5, force-close = M15), plus the leg mini-chart series. Empty when flat. Each
-        (leg, tf) frame is cached per bar, so this adds a couple of history calls per bar while a
-        basket is open. Returns (leg_slopes, leg_rsi_graphs, leg_macd_graphs)."""
+        """LEG data on the ACTIVE CE/PE option's OWN candles: per-TF RSI for the DCA ladder tiers
+        (M1-H4) + RSI/MACD latest-pivot slopes for the force-close (M15·H1·H4) and book (M5), plus the
+        leg mini-chart series. Empty when flat. Each (leg, tf) frame is cached per bar. Returns
+        (leg_slopes, leg_rsi_mtf, leg_rsi_graphs, leg_macd_graphs, leg_slopes_raw)."""
         if not self.active:
-            return {}, {}, {}, {}
+            return {}, {}, {}, {}, {}
         leg_sym = self.active["symbol"]
-        slopes, rsi_graphs, macd_graphs, raw = {}, {}, {}, {}
-        for tf in LEG_SLOPE_TIMEFRAMES:
+        slopes, rsi_mtf, rsi_graphs, macd_graphs, raw = {}, {}, {}, {}, {}
+        needed = []
+        for tf in (list(RSI_DCA_LADDER_TIMEFRAMES) + list(LEG_SLOPE_TIMEFRAMES)):
+            if tf not in needed:
+                needed.append(tf)
+        for tf in needed:
             df = self._frame(leg_sym, tf)
             if df is None or len(df) == 0:
                 continue
-            rsl, msl, rg, mg = self._slope_and_graph(df)
             key = tf.replace("TIMEFRAME_", "")
-            slopes[key] = {"rsi": rsl, "macd": msl}
-            rsi_graphs[key] = rg
-            macd_graphs[key] = mg
-            raw[key] = self._raw_slope(df)       # OB/OS-unbounded variant → force-close grey fallback
-        return slopes, rsi_graphs, macd_graphs, raw
+            rsi_s = self.indicator.calculate_rsi(df["Close"], RSI_LENGTH, RSI_MA_TYPE)
+            rsi_mtf[tf] = float(rsi_s.iloc[-1]) if len(rsi_s) else 50.0
+            if tf in LEG_SLOPE_TIMEFRAMES:
+                rsl, msl, rg, mg = self._slope_and_graph(df)
+                slopes[key] = {"rsi": rsl, "macd": msl}
+                rsi_graphs[key] = rg
+                macd_graphs[key] = mg
+                raw[key] = self._raw_slope(df)   # OB/OS-unbounded variant → force-close grey fallback
+        return slopes, rsi_mtf, rsi_graphs, macd_graphs, raw
 
     def _candidate_leg_slopes(self, cand_sym):
         """Slopes on a CANDIDATE option leg (H4/M5/M15), computed while FLAT to gate a fresh entry.
