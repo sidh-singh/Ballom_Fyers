@@ -59,6 +59,28 @@ panel — the moment the clock crosses 06:00 / 18:00.
 
 ---
 
+## Market status badge (top strip)
+
+Beside the engine-status dot (**● Engine RUNNING**) the top strip shows a pill telling you what
+**today's market** is doing — so a quiet bot is never ambiguous between "markets are shut" and
+"something is broken":
+
+- **● Market open** (green) — a segment this bot trades is in its normal session right now.
+- **○ Market closed** (grey) — a normal trading day, but outside market hours; the tooltip /
+  sub-text reads *Pre-open — trading starts 09:15* or *Closed for the day — reopens 09:15*.
+- **◆ Holiday** (blue) — a weekend or an NSE holiday; nothing trades today.
+- **★ Unusual open** (amber) — the exchange is open on a day the calendar says is shut: a
+  **Diwali Muhurat**, a weekend **Union-Budget** session, or any exchange-declared special session.
+
+The state is **never hardcoded**. The engine reads the broker's own `market_status` each
+supervisor tick and writes the verdict into `app_status.json` (the `market` field), so Muhurat /
+Budget / any unscheduled session lights up as **Unusual open** automatically — no date tables to
+maintain. If the live poll is briefly stale the pill falls back to the static NSE/MCX schedule and
+its tooltip notes *from schedule (no live reading)*. On an older state file (no `market` field) the
+badge simply renders nothing, so the dashboard stays backward-compatible.
+
+---
+
 ## Security — the Force-close password
 
 Force-close flattens a **real open position** (simulated on demo), and the dashboard is
