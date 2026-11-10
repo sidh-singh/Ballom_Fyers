@@ -7,6 +7,34 @@ Format: `YYYY-MM-DD` — change — _why_.
 
 ---
 
+## 2026-11-10 — Dashboard: today's market-status badge (open / closed / holiday / unusual open)
+
+The top status strip now shows, right next to **● Engine RUNNING**, a pill telling you what
+**today's market** is doing — so a silent bot is no longer ambiguous between *markets are shut*
+and *something broke*:
+
+- **● Market open** (green) — a traded segment is in its normal session right now.
+- **○ Market closed** (grey) — a normal trading day, but outside hours (tooltip: *Pre-open —
+  trading starts 09:15* / *Closed for the day — reopens 09:15*).
+- **◆ Holiday** (blue) — a weekend or an NSE holiday.
+- **★ Unusual open** (amber) — the exchange is open on a statically-closed day: a Diwali
+  **Muhurat**, a weekend **Union-Budget** session, or any special session.
+
+**Engine** (`application.py`): new `_market_summary(ctx, config)` classifies today **only** from
+state the supervisor already tracks — the broker's live `market_status` (`ctx.is_segment_open`),
+the NSE holiday set and the static schedule — with **zero hardcoded dates**. An open segment on a
+statically-closed day ⇒ *unusual* (this is how Muhurat / Budget auto-light-up, reusing the live
+special-session auto-detection). A stale/missing live poll falls back to the static schedule and
+flags `live=false`. The dict rides on the periodic `write_app_status()` writes (running + brake)
+under a new `market` key.
+
+**Dashboard** (`dashboard.py`): new `_market_badge()` renders a themed pill (colour + icon) after
+the engine dot, with the detail in the tooltip + sub-text; it renders nothing when the field is
+absent, so old `app_status.json` files stay compatible. `DASHBOARD.md` documents the four states.
+
+Applies to **all 12 branches** (`fyers_*` + `linux_fyers_*`, demo/live × plain/netting/hedging) —
+the code is identical on each; only this changelog entry is per-branch.
+
 ## 2026-11-10 — Docs: TRADING_LOGIC.md refreshed to the current strategy
 
 Brought `TRADING_LOGIC.md` up to date — it had drifted to the 2026-11-04 logic. It now documents the
