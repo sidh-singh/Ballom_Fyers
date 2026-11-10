@@ -779,6 +779,40 @@ def ohlc_chart(symbol, oh, events, show_avg):
 
 
 # ── status + log ─────────────────────────────────────────────────────────────
+def _market_badge(mkt):
+    """Status pill — is TODAY's market open / closed / a holiday / an unusual open (Diwali
+    Muhurat / Budget / any special session)? Fed by the engine's live broker market-status,
+    surfaced in app_status.json under `market`, and shown beside the engine-status dot. Renders
+    nothing until the engine writes the field, so it is backward-compatible with old state files."""
+    if not isinstance(mkt, dict) or not mkt.get("state"):
+        return html.Span()
+    state = str(mkt.get("state")).lower()
+    label = mkt.get("label") or state.title()
+    detail = mkt.get("detail") or ""
+    col, icon = {
+        "open":    (C["green"], "●"),   # trading now
+        "unusual": (C["amber"], "★"),   # Muhurat / Budget / special open
+        "holiday": (C["blue"],  "◆"),   # weekend / NSE holiday
+        "closed":  (C["muted"], "○"),   # normal day, outside hours
+    }.get(state, (C["dim"], "○"))
+    if mkt.get("live") is False and detail:
+        detail += " · from schedule (no live reading)"
+    pill = html.Span([
+        html.Span(icon, style={"marginRight": "6px", "fontSize": "11px"}),
+        html.Span(label, style={"fontWeight": "800", "letterSpacing": "0.3px"}),
+    ], title=detail or label, style={
+        "color": col, "border": f"1.5px solid {col}", "borderRadius": "999px",
+        "padding": "2px 11px", "fontSize": "12px", "display": "inline-flex",
+        "alignItems": "center", "lineHeight": "1.5", "whiteSpace": "nowrap",
+    })
+    bits = [pill]
+    if detail:
+        bits.append(html.Span(detail, style={
+            "color": C["muted"], "fontSize": "11px", "marginLeft": "9px"}))
+    return html.Span(bits, style={"marginLeft": "16px", "display": "inline-flex",
+                                  "alignItems": "center", "flexWrap": "wrap"})
+
+
 def status_strip(view_date=None, historical=False):
     st = _read(APP_STATUS_FILE, {}) or {}
     status = str(st.get("status", "unknown")).upper()
@@ -787,10 +821,11 @@ def status_strip(view_date=None, historical=False):
     strip = _card([html.Div([
         html.Span("●", style={"color": col, "fontSize": "16px", "marginRight": "8px"}),
         html.Span(f"Engine {status}", style={"color": C["text"], "fontWeight": "700"}),
+        _market_badge(st.get("market")),      # today: open / closed / holiday / unusual open
         html.Span(st.get("message", ""), style={"color": C["dim"], "marginLeft": "14px", "fontSize": "13px"}),
         html.Span(f"updated {st.get('timestamp','—')}", style={"color": C["muted"],
                   "marginLeft": "auto", "fontSize": "11px"}),
-    ], style={"display": "flex", "alignItems": "center"})], pad="12px 18px")
+    ], style={"display": "flex", "alignItems": "center", "flexWrap": "wrap", "rowGap": "6px"})], pad="12px 18px")
     if historical:
         banner = _card([html.Div([
             html.Span(f"🕑 VIEWING {view_date}", style={"color": C["amber"], "fontWeight": "800"}),

@@ -223,6 +223,60 @@ def _refresh_special_sessions(ctx: EngineContext) -> None:
         ctx.special_sessions = []
 
 
+def _market_summary(ctx: EngineContext, config: dict) -> dict:
+    """Classify TODAY's market for the dashboard status badge — purely from the live broker
+    status + holiday calendar the engine already tracks (zero hardcoded dates). Exactly one of:
+      • open    — a segment this bot trades is OPEN right now (normal session)
+      • unusual — exchange OPEN on a statically-closed day (Diwali Muhurat / Union-Budget / any
+                  special session the engine auto-detected off the live market status)
+      • holiday — weekend or NSE holiday, nothing open
+      • closed  — a normal trading day, but outside market hours right now
+    `live` says whether the call came from a FRESH broker reading (vs the static-schedule
+    fallback, used only when the market_status poll is stale/missing). Written into
+    app_status.json so the dashboard renders it next to the engine-status dot."""
+    now = now_ist()
+    today = now.date()
+    ds = today.isoformat()
+
+    def _hrs(a):
+        return MARKET_HOURS.get(a, MARKET_HOURS["INDEX"])
+
+    assets = sorted({s.get("asset_type", "INDEX")
+                     for s in config.get("symbols", []) if s.get("enabled")}) or ["INDEX"]
+    seg_live = {a: ctx.is_segment_open(a) for a in assets}   # True / False / None (no fresh reading)
+    fresh = any(v is not None for v in seg_live.values())
+    open_live = any(v is True for v in seg_live.values())
+
+    is_holiday = ds in ctx.holidays
+    is_weekend = today.weekday() >= 5
+    scheduled = not (is_weekend or is_holiday)
+
+    t = now.time()
+    within_hours = any(_hrs(a)["open"] <= t <= _hrs(a)["close"] for a in assets)
+    open_now = open_live if fresh else (scheduled and within_hours)
+
+    if open_now and not scheduled:
+        state, label = "unusual", "Unusual open"
+        detail = "Exchange open on a non-scheduled day — special session (auto-detected)"
+    elif open_now:
+        state, label = "open", "Market open"
+        detail = "Normal trading session in progress"
+    elif not scheduled:
+        state, label = "holiday", "Holiday"
+        detail = "Weekend — markets shut" if is_weekend else "NSE holiday — markets shut"
+    else:
+        state, label = "closed", "Market closed"
+        first = min(_hrs(a)["open"] for a in assets)
+        detail = (f"Pre-open — trading starts {first.strftime('%H:%M')}" if t < first
+                  else f"Closed for the day — reopens {first.strftime('%H:%M')}")
+
+    return {
+        "state": state, "label": label, "detail": detail, "live": fresh, "date": ds,
+        "segments": {a: (("open" if v else "closed") if v is not None else "unknown")
+                     for a, v in seg_live.items()},
+    }
+
+
 def _process_commands(ctx: EngineContext, workers: dict, config: dict) -> None:
     """Execute dashboard-issued commands. Each is a JSON file in COMMANDS_DIR, processed once then
     deleted (cross-process channel: the dashboard writes, the engine executes — like the brake flag).
@@ -411,9 +465,10 @@ def main() -> None:
                     cfg_mtime = _m
             except Exception:
                 pass
+            market = _market_summary(ctx, config)   # today: open / closed / holiday / unusual
             if config.get("brake", 0) == 1:
                 ctx.brake_event.set()
-                write_app_status("brake", "Brake ON — workers paused")
+                write_app_status("brake", "Brake ON — workers paused", market=market)
             else:
                 ctx.brake_event.clear()
 
@@ -436,6 +491,7 @@ def main() -> None:
                     "running",
                     f"{sum(w.is_alive() for w in workers.values())} worker(s) alive",
                     holidays_loaded=len(ctx.holidays),
+                    market=market,
                 )
 
         except KeyboardInterrupt:
