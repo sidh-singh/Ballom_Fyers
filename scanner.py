@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 from datetime import datetime
 
 from constants import (
@@ -27,6 +28,19 @@ from constants import (
 )
 
 logger = logging.getLogger("scanner")
+
+# ── strike-selection mode ────────────────────────────────────────────────────
+# "deterministic" (DEFAULT): pick a STABLE strike from spot + the round-strike grid, so two bots
+# scanning the same market minute on SEPARATE machines converge on the SAME pair — netting and
+# hedging then trade an identical basket and differ ONLY in their exit (a clean A/B). "liquidity":
+# the old OI/volume/spread-scored pick — best single-bot liquidity, but it drifts second-to-second,
+# so independent branches land on DIFFERENT strikes (which is why netting traded and hedging didn't).
+# Override per deployment with the SCAN_MODE / SCAN_OTM_STEPS env vars.
+SCAN_MODE = os.environ.get("SCAN_MODE", "deterministic").strip().lower()
+try:
+    SCAN_OTM_STEPS = int(os.environ.get("SCAN_OTM_STEPS", "0"))   # OTM offset in round_step units
+except ValueError:
+    SCAN_OTM_STEPS = 0
 
 
 def _ok(r) -> bool:
@@ -111,6 +125,39 @@ def _score(o: dict, spot: float, otype: str, lot_size, max_per_lot: float,
     return score, strike, ltp
 
 
+def _pick_deterministic(chain, spot: float, round_step: float):
+    """Deterministic CE/PE strike pick (SCAN_MODE='deterministic'). Snap spot to the round-strike grid
+    (ATM) and take the chain option AT that strike (± SCAN_OTM_STEPS grid steps) per side. A PURE
+    function of (spot, grid, chain) — NO OI/volume/spread/premium inputs — so two bots scanning the
+    same minute, even on different machines, pick the SAME strikes. A target exactly between two listed
+    strikes breaks to the lower strike, so both bots still agree. Returns
+    {'CE': (strike, ltp, symbol), 'PE': (...)} or None if either side has no usable strike."""
+    if round_step and round_step > 0:
+        atm = round(spot / round_step) * round_step
+        targets = {"CE": atm + SCAN_OTM_STEPS * round_step,
+                   "PE": atm - SCAN_OTM_STEPS * round_step}
+    else:
+        targets = {"CE": spot, "PE": spot}          # no grid → nearest listed strike to spot
+    out = {}
+    for otype, target in targets.items():
+        best = None                                  # (distance, strike, ltp, symbol)
+        for o in chain:
+            if o.get("option_type") != otype:
+                continue
+            strike = float(o.get("strike_price", 0) or 0)
+            ltp = float(o.get("ltp", 0) or 0)
+            sym = o.get("symbol", "")
+            if strike <= 0 or ltp <= 0 or not sym:
+                continue
+            d = abs(strike - target)
+            if best is None or d < best[0] or (d == best[0] and strike < best[1]):
+                best = (d, strike, ltp, sym)
+        if best is None:
+            return None
+        out[otype] = (best[1], best[2], best[3])     # strike, ltp, symbol
+    return out
+
+
 def scan_best_pair(symbol_cfg: dict, api, meter=None, lot_df=None) -> dict | None:
     """Return {CE_Symbol, PE_Symbol, CE_Strike, PE_Strike, CE_Premium, PE_Premium,
     Expiry, DTE, VIX} for a fresh basket, or None. Strikes whose premium × lot_size
@@ -165,29 +212,43 @@ def scan_best_pair(symbol_cfg: dict, api, meter=None, lot_df=None) -> dict | Non
             return None
         chain = oc.get("data", {}).get("optionsChain", [])
 
-        best = {}
-        for otype in ("CE", "PE"):
-            ranked = []
-            for o in chain:
-                if o.get("option_type") != otype:
-                    continue
-                s = _score(o, spot, otype, _lot(o.get("symbol", ""), lot_df),
-                           max_per_lot, min_per_lot, round_step)
-                if s:
-                    ranked.append((s[0], o, s[1], s[2]))
-            if not ranked:
-                logger.info("scan(%s): no %s candidate", symbol_cfg.get("symbol"), otype)
+        if SCAN_MODE == "liquidity":
+            # OLD behaviour: OI/volume/spread-scored best strike per side (drifts → branches diverge).
+            best = {}
+            for otype in ("CE", "PE"):
+                ranked = []
+                for o in chain:
+                    if o.get("option_type") != otype:
+                        continue
+                    s = _score(o, spot, otype, _lot(o.get("symbol", ""), lot_df),
+                               max_per_lot, min_per_lot, round_step)
+                    if s:
+                        ranked.append((s[0], o, s[1], s[2]))
+                if not ranked:
+                    logger.info("scan(%s): no %s candidate", symbol_cfg.get("symbol"), otype)
+                    return None
+                ranked.sort(key=lambda x: x[0], reverse=True)
+                best[otype] = ranked[0]
+            ce, pe = best["CE"], best["PE"]
+            ce_sym, ce_strike, ce_prem = ce[1]["symbol"], ce[2], ce[3]
+            pe_sym, pe_strike, pe_prem = pe[1]["symbol"], pe[2], pe[3]
+            mode_dbg = f"liquidity ce={ce[0]:.2f} pe={pe[0]:.2f}"
+        else:
+            # DEFAULT: deterministic strike from spot + the round grid → identical across branches.
+            picked = _pick_deterministic(chain, spot, round_step)
+            if not picked:
+                logger.info("scan(%s): no deterministic strike", symbol_cfg.get("symbol"))
                 return None
-            ranked.sort(key=lambda x: x[0], reverse=True)
-            best[otype] = ranked[0]
+            ce_strike, ce_prem, ce_sym = picked["CE"]
+            pe_strike, pe_prem, pe_sym = picked["PE"]
+            mode_dbg = f"deterministic otm_steps={SCAN_OTM_STEPS}"
 
-        ce, pe = best["CE"], best["PE"]
         return {
-            "CE_Symbol": ce[1]["symbol"], "PE_Symbol": pe[1]["symbol"],
-            "CE_Strike": ce[2], "PE_Strike": pe[2],
-            "CE_Premium": ce[3], "PE_Premium": pe[3],
+            "CE_Symbol": ce_sym, "PE_Symbol": pe_sym,
+            "CE_Strike": ce_strike, "PE_Strike": pe_strike,
+            "CE_Premium": ce_prem, "PE_Premium": pe_prem,
             "Expiry": exp_date.strftime("%Y-%m-%d"), "DTE": dte, "VIX": float(vix or 0),
-            "Debug": f"spot={spot} dte={dte} ce={ce[0]:.2f} pe={pe[0]:.2f}",
+            "Debug": f"spot={spot} dte={dte} mode={SCAN_MODE} {mode_dbg}",
         }
     except Exception as e:
         logger.warning("scan(%s) error: %s", symbol_cfg.get("symbol"), e)
