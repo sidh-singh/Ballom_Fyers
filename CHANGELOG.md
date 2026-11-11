@@ -1,5 +1,26 @@
 # CHANGELOG — `fyers_live` / `fyers_demo`
 
+## 2026-11-12 — Scanner: deterministic strike selection (netting & hedging pick the SAME pair)
+
+**Problem:** netting and hedging (run on separate machines) were picking DIFFERENT CE/PE strikes, so
+one took trades and the other none. The entry logic is identical between the variants — the divergence
+came from the **pair selector**: each branch ran its OWN 5-min-cached LIVE scan scored on OI / volume /
+spread / premium, all of which drift second-to-second, so two bots scanning the same market a little
+apart in time landed on different strikes. The entry gate evaluates the *candidate leg's* own slopes,
+so a different strike → a different (or no) entry, which then cascaded through the whole day.
+
+**Fix (`scanner.py`, default `SCAN_MODE=deterministic`):** the strike is now chosen purely from the
+underlying's spot snapped to the round-strike grid — ATM ± `SCAN_OTM_STEPS` steps, identical for both
+legs. A pure function of (spot, grid, chain) with NO liquidity inputs, so two bots scanning the same
+minute — even on different machines — converge on the SAME strike. netting and hedging then trade an
+identical basket and differ ONLY in their exit (the intended A/B). Divergence is now limited to the
+rare moment spot sits on an exact grid boundary.
+
+Reversible/tunable via env vars (no code change): `SCAN_MODE=liquidity` restores the old OI/volume-
+scored picker; `SCAN_OTM_STEPS=N` shifts the strike N grid-steps OTM (0 = nearest round strike).
+**Takes effect only after the engine process is RESTARTED** on each machine. Applied to all netting +
+hedging branches (live + demo, Windows + Linux); `scanner.py` is shared/identical across them.
+
 ## 2026-11-12 — Dashboard: "View date" defaults to today on every load / refresh (+ midnight roll-over)
 
 The **View date** picker was frozen to the day the dashboard *process* started — the layout baked
