@@ -311,6 +311,18 @@ def server_cards(servers, uptimes, downcounts, historical, notif=None):
                 html.Span((f"· {lat} ms" if lat is not None and not historical else ""),
                           style={"color": C["muted"], "fontSize": "11px", "marginLeft": "8px"}),
             ], style={"marginTop": "8px"}),
+            *([html.Div([
+                html.Span("ping ", style={"color": C["muted"], "fontSize": "11px"}),
+                html.Span("●", style={"color": C["green"] if s.get("reachable") else C["red"],
+                                      "fontSize": "11px"}),
+                html.Span(f"·  port {s.get('port', '')} ", style={"color": C["muted"],
+                          "fontSize": "11px", "marginLeft": "8px"}),
+                html.Span("●", style={"color": C["green"] if s.get("port_open") else C["red"],
+                                      "fontSize": "11px"}),
+            ], style={"marginTop": "6px"},
+               title="UP needs EITHER probe. If 'ping' stays green while the box is rebooting, "
+                     "something upstream (the host/hypervisor) is answering ICMP — set UP_POLICY=port "
+                     "so the service port decides.")] if not historical else []),
             html.Div((f"since {since}" if since and not historical else ""),
                      style={"color": C["muted"], "fontSize": "10px", "marginTop": "4px"}),
         ]

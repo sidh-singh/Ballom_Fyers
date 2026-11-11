@@ -36,16 +36,26 @@ TCP_TIMEOUT_SEC = 2                     # per-server service-port connect timeou
 PROBE_ATTEMPTS = 2                      # probe tries within one check before concluding DOWN
 PROBE_RETRY_GAP_SEC = 0.4              # pause (s) between those tries
 # The retry above is the PRIMARY flap filter (a dropped ping is retried, so a healthy box reads
-# UP). CONFIRM_SWEEPS is a lighter second layer: a real restart must be caught, so keep this small
-# — 2 means a change shows after ~2 sweeps (~20-25s), still ignoring one-off single-sweep blips.
-# Set 1 for near-instant detection (relies on the retry alone); raise it if flapping ever returns.
-CONFIRM_SWEEPS = 2                      # consecutive agreeing sweeps required to commit a change
+# UP). CONFIRM_SWEEPS is a lighter second layer. It is 1 by default — a status change shows on the
+# FIRST sweep that sees it (fast, so a real restart is never missed); the in-check retry alone
+# absorbs single-packet blips. RAISE it (2-3) only if flapping ever returns on a healthy box.
+CONFIRM_SWEEPS = 1                      # consecutive agreeing sweeps required to commit a change
 
 RETENTION_DAYS = 7                      # keep exactly 1 week of history
 
 # Service port probed per target OS — confirms the box is actually serving even if
 # ICMP ping is firewalled. Windows → RDP, Linux → SSH.
 SERVICE_PORT = {"windows": 3389, "linux": 22}
+
+# What counts as UP:
+#   "any"  — ping OR the service port (default; tolerant of a firewalled RDP/SSH).
+#   "port" — the SERVICE PORT must answer; ICMP is ignored. Use this if the host/hypervisor
+#            answers ping even while the guest OS is rebooting (that hides a reboot behind a
+#            false "ping UP"). Requires the port to be reachable from the monitor.
+#   "ping" — ICMP only.
+# The dashboard shows the two probes separately per server, so you can see which one is keeping a
+# box "up" during a reboot and pick the right policy.
+UP_POLICY = os.environ.get("UP_POLICY", "any").strip().lower()
 
 # ── data dir (OS-aware; override with HEALTH_DIR) ───────────────────────────
 def _default_data_dir() -> Path:

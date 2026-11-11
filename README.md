@@ -47,23 +47,35 @@ Provider: Veeble
 - The old `(IP) - NAME` one-line style is still accepted (OS inferred from the name).
 
 ## How a server is checked (no credentials needed)
-Each server is **UP** if **either** an ICMP **ping** gets a **genuine echo reply** **or** its
-**service port** (RDP 3389 for Windows, SSH 22 for Linux) accepts a TCP connection — enough to
-detect a shutdown / unreachable box even if ICMP is firewalled. The ping must see a real reply
-(verified by its TTL), not merely a zero exit code — on Windows `ping` exits 0 even for a
-"destination host unreachable" router reply, which would otherwise read a DOWN box as UP.
-*(Deeper checks — a specific service running, CPU/RAM — would need login credentials; `health.py`
-is the one place to extend.)*
+Each server is probed two ways every sweep: an ICMP **ping** (reachability) and a TCP connect to
+its **service port** (RDP 3389 for Windows, SSH 22 for Linux — proves the guest OS is actually
+serving). The **dashboard shows both probes separately** on each card (`ping ●` / `port ●`), so you
+can always see *why* a box reads up. The ping counts only on a **genuine echo reply** (verified by
+its TTL), not a zero exit code — on Windows `ping` exits 0 even for a "destination host unreachable"
+router reply, which would otherwise read a DOWN box as UP.
 
-**Flap-proofing (no false "down" blips).** Internet VPS routinely rate-limit ICMP and firewall
-RDP, so a single dropped ping on an otherwise-healthy box used to register a spurious DOWN — and
-then UP again on the next sweep, repeating many times a day. Two guards prevent this: each check
-**retries the probe** up to `PROBE_ATTEMPTS` times before concluding DOWN, and the monitor only
-**records a status change after `CONFIRM_SWEEPS` consecutive agreeing sweeps** (hysteresis). A
-genuine shutdown is therefore reported after up to `CONFIRM_SWEEPS` sweeps (**~20–25 s** at the
-default `CONFIRM_SWEEPS = 2` and 10 s interval); a transient blip is silently absorbed, and a
-steady server never lags. Tune both in `constants.py` — set `CONFIRM_SWEEPS = 1` for near-instant
-detection (the retry alone filters flaps), or raise it if flapping ever returns.
+**What counts as UP** is `UP_POLICY` (in `constants.py`, or the `UP_POLICY` env var):
+- `any` *(default)* — UP if **either** probe answers. Tolerant of a firewalled RDP/SSH.
+- `port` — the **service port must answer**; ICMP is ignored. Use this when something upstream (the
+  host / hypervisor) answers ping even while the guest is rebooting, which would otherwise hide the
+  reboot behind a false "ping UP". Requires the port to be reachable from the monitor.
+- `ping` — ICMP only.
+
+*(Deeper checks — a specific service, CPU/RAM — would need login credentials; `health.py` is the one
+place to extend.)*
+
+**Flap-proofing.** Each check **retries the probe** up to `PROBE_ATTEMPTS` times before concluding
+DOWN (so a single dropped ping on a healthy box doesn't flap), and the monitor records a change
+after `CONFIRM_SWEEPS` consecutive agreeing sweeps. `CONFIRM_SWEEPS` is **1** by default — a change
+shows on the first sweep that sees it (~10–17 s at the 10 s interval), so a real restart is never
+missed; the retry alone absorbs single-packet blips. Raise it to 2–3 only if flapping ever returns.
+
+**If a real reboot is NOT showing as DOWN:** watch the card's `ping ●` / `port ●` dots — or run
+`python probe_debug.py` on the **monitor host** — while you reboot the box. If **ping stays green
+while port goes red**, the host/hypervisor is answering ICMP for a down guest: set `UP_POLICY=port`
+(works as long as `port ●` is green when the box is healthy, i.e. the port is reachable from the
+monitor). If the port is never reachable either, network probing alone can't see the reboot — that
+needs a small agent on the box.
 
 ## Run it — Windows
 ```bat
@@ -89,8 +101,9 @@ Dashboard → `http://<server-ip>:9000` (or SSH-tunnel `127.0.0.1:9000`). Logs:
 |------|---------|
 | `ip_list.txt` | the server list (edit this to add servers) |
 | `servers.py` | tolerant parser + OS classification |
-| `health.py` | per-server ping + service-port check |
+| `health.py` | per-server ping + service-port check (retries, TTL-verified ping, `UP_POLICY`) |
 | `monitor.py` | background loop → `current.json` + per-day history (1-week retention) |
+| `probe_debug.py` | run on the monitor host to watch raw ping/port per server live (diagnose detection) |
 | `dashboard.py` | the dashboard (port 9000) |
 | `constants.py` | ports, intervals, retention, data dir |
 | `*.bat` / `*.sh` | Windows / Linux launchers |

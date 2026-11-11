@@ -18,9 +18,20 @@ import subprocess
 import time
 
 from constants import (PING_TIMEOUT_SEC, TCP_TIMEOUT_SEC, SERVICE_PORT,
-                       PROBE_ATTEMPTS, PROBE_RETRY_GAP_SEC)
+                       PROBE_ATTEMPTS, PROBE_RETRY_GAP_SEC, UP_POLICY)
 
 _LOCAL_WINDOWS = platform.system() == "Windows"
+
+
+def _is_up(reachable: bool, port_open: bool) -> bool:
+    """Apply UP_POLICY to the two probe results. 'port' makes the service port authoritative
+    (ignores ICMP — use when the host/hypervisor answers ping while the guest is down); 'ping'
+    trusts ICMP only; 'any' (default) is UP if EITHER answers."""
+    if UP_POLICY == "port":
+        return port_open
+    if UP_POLICY == "ping":
+        return reachable
+    return reachable or port_open
 
 
 def _ping(ip: str, timeout: float = PING_TIMEOUT_SEC) -> tuple[bool, float | None]:
@@ -72,11 +83,11 @@ def check_server(server: dict) -> dict:
     for attempt in range(max(1, PROBE_ATTEMPTS)):
         reachable, ping_ms = _ping(ip)
         port_open, port_ms = _tcp(ip, port)
-        if reachable or port_open:
+        if _is_up(reachable, port_open):
             break
         if attempt < PROBE_ATTEMPTS - 1:
             time.sleep(PROBE_RETRY_GAP_SEC)
-    up = reachable or port_open
+    up = _is_up(reachable, port_open)
     latency = ping_ms if ping_ms is not None else port_ms
 
     return {
