@@ -77,6 +77,16 @@ while port goes red**, the host/hypervisor is answering ICMP for a down guest: s
 monitor). If the port is never reachable either, network probing alone can't see the reboot — that
 needs a small agent on the box.
 
+**Optional — make a Windows box answer ping.** Windows Firewall blocks inbound ICMP echo by
+default, so the `MT*` (Windows) boxes show a red `ping ●` — harmless, since they're judged by their
+RDP port. To turn ping green on a box, run this **once in an elevated PowerShell on that box**:
+
+```powershell
+New-NetFirewallRule -DisplayName "Allow ICMPv4-In" -Protocol ICMPv4 -IcmpType 8 -Direction Inbound -Action Allow
+```
+
+(Purely cosmetic — RDP already gives the real up/down signal; no monitoring benefit.)
+
 ## Run it — Windows
 ```bat
 start_all.bat            REM starts the monitor (new window) + the dashboard
