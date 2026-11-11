@@ -7,6 +7,25 @@ Format: `YYYY-MM-DD` — change — _why_.
 
 ---
 
+## 2026-11-12 — Dashboard: "View date" defaults to today on every load / refresh (+ midnight roll-over)
+
+The **View date** picker was frozen to the day the dashboard *process* started — the layout baked
+`value=_today_iso()` once at import, and the rolling-window sync kept whatever value was still inside
+the 7-day window. So a long-running dashboard (or a tab left open past midnight) opened on a **stale
+day** instead of today.
+
+Now the view is **anchored to today by default** and only leaves it for an explicit past-day pick:
+- the dropdown's initial `value` is `None` → `_refresh` coalesces it to today, so a fresh load /
+  refresh / restored page shows **today** with no stale flash;
+- `_sync_viewdate` snaps to today on the first render (`n_intervals == 0` / empty value) and — via a
+  new in-memory Store `viewbase` tracking the auto "today" — **advances to the new day** if the clock
+  crosses midnight while the page is still tracking today;
+- an **explicitly selected past day is preserved** until it ages out of the 7-day window or the page
+  is reloaded.
+
+Applies to **all 12 branches** (identical dashboard code, cherry-picked) and the **`health_check`**
+dashboard (same fix, adapted). `DASHBOARD.md` documents the behaviour.
+
 ## 2026-11-10 — Dashboard: today's market-status badge (open / closed / holiday / unusual open)
 
 The top status strip now shows, right next to **● Engine RUNNING**, a pill telling you what
