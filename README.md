@@ -15,7 +15,10 @@ separate from the 12 fyers trading branches — its own port (**9000**) and its 
   you haven't seen yet (e.g. a server that **shut down and restarted quickly** while you were
   away). Click the badge to read what happened — it's then marked read and the dot clears
   (persisted in `acks.json`, so it stays cleared across refreshes until the next change).
-- **Date dropdown** to browse the **last 1 week**; older data is auto-deleted.
+- **Date dropdown** to browse the **last 1 week** (older data is auto-deleted). It **defaults to
+  today** and re-anchors to today on every page load / refresh — a tab left open overnight never
+  opens on a stale day, and it rolls over to the new day at midnight — while an explicitly chosen
+  past day stays put until you reload.
 - **Scales to many servers (100+):** the uptime timeline, the server-card grid, and the
   downtime log each scroll **inside their own panel** (adaptive — no scrollbar when there are
   only a few), so the page stays a manageable height instead of growing endlessly.

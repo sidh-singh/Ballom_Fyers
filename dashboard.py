@@ -349,12 +349,13 @@ app = dash.Dash(__name__, title="Ballom Health",
                             "content": "width=device-width, initial-scale=1"}])
 app.layout = html.Div([
     dcc.Interval(id="tick", interval=DASHBOARD_REFRESH_MS, n_intervals=0),
+    dcc.Store(id="viewbase", storage_type="memory"),   # 'today' the view is auto-tracking (midnight roll-over)
     html.Div([
         html.Div(id="titlebar", style={"display": "flex", "alignItems": "baseline",
                  "gap": "12px", "flexWrap": "wrap"}),   # title + "updated" — themed by _refresh
         html.Div([
             html.Span("View date", style={"color": "#8a93a8", "fontSize": "11px", "marginRight": "8px"}),
-            dcc.Dropdown(id="viewdate", options=_recent_dates(), value=_today_iso(),
+            dcc.Dropdown(id="viewdate", options=_recent_dates(), value=None,
                          clearable=False, style={"width": "190px", "fontSize": "13px"}),
         ], style={"marginLeft": "auto", "display": "flex", "alignItems": "center", "gap": "4px"}),
     ], style={"display": "flex", "alignItems": "center", "flexWrap": "wrap", "gap": "8px 12px",
@@ -370,13 +371,27 @@ app.layout = html.Div([
 
 
 @app.callback(
-    Output("viewdate", "options"), Output("viewdate", "value"),
-    Input("tick", "n_intervals"), dash.dependencies.State("viewdate", "value"),
+    Output("viewdate", "options"), Output("viewdate", "value"), Output("viewbase", "data"),
+    Input("tick", "n_intervals"), State("viewdate", "value"), State("viewbase", "data"),
 )
-def _sync_dates(_, cur):
+def _sync_dates(n, cur, base):
+    """Roll the date-picker options forward (today + the previous 6 days) and keep the view
+    ANCHORED TO TODAY by default. The view only leaves today for an explicit past-day pick:
+      • a freshly loaded / refreshed / restored page (n_intervals == 0, or a cleared value)
+        snaps to today — a tab opened, reopened or left open overnight never sticks on a stale day;
+      • while the page stays open, if it is still tracking the auto 'today' when the clock rolls
+        past midnight, it advances to the new today;
+      • an explicitly chosen past day is preserved (until it ages out of the 7-day window).
+    `viewbase` (a memory Store, cleared on every page load) is the 'today' the view was last
+    tracking, so an auto-today roll-over can be told apart from a deliberate past-day pick."""
+    today = _today_iso()
     opts = _recent_dates()
     vals = [o["value"] for o in opts]
-    return opts, (cur if cur in vals else _today_iso())
+    if not n or not cur or cur == today or (cur == base and base != today):
+        return opts, today, today            # fresh page / on today / midnight roll-over → today
+    if cur in vals:
+        return opts, cur, base               # explicit past-day pick → keep it
+    return opts, today, today                # aged out of the window → today
 
 
 @app.callback(
