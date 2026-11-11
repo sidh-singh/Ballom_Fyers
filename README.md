@@ -47,19 +47,23 @@ Provider: Veeble
 - The old `(IP) - NAME` one-line style is still accepted (OS inferred from the name).
 
 ## How a server is checked (no credentials needed)
-Each server is **UP** if **either** an ICMP **ping** succeeds **or** its **service port**
-(RDP 3389 for Windows, SSH 22 for Linux) accepts a TCP connection — enough to detect a
-shutdown / unreachable box even if ICMP is firewalled. *(Deeper checks — a specific service
-running, CPU/RAM — would need login credentials; `health.py` is the one place to extend.)*
+Each server is **UP** if **either** an ICMP **ping** gets a **genuine echo reply** **or** its
+**service port** (RDP 3389 for Windows, SSH 22 for Linux) accepts a TCP connection — enough to
+detect a shutdown / unreachable box even if ICMP is firewalled. The ping must see a real reply
+(verified by its TTL), not merely a zero exit code — on Windows `ping` exits 0 even for a
+"destination host unreachable" router reply, which would otherwise read a DOWN box as UP.
+*(Deeper checks — a specific service running, CPU/RAM — would need login credentials; `health.py`
+is the one place to extend.)*
 
 **Flap-proofing (no false "down" blips).** Internet VPS routinely rate-limit ICMP and firewall
 RDP, so a single dropped ping on an otherwise-healthy box used to register a spurious DOWN — and
 then UP again on the next sweep, repeating many times a day. Two guards prevent this: each check
 **retries the probe** up to `PROBE_ATTEMPTS` times before concluding DOWN, and the monitor only
 **records a status change after `CONFIRM_SWEEPS` consecutive agreeing sweeps** (hysteresis). A
-genuine shutdown is therefore reported after up to `CONFIRM_SWEEPS` sweeps (~30–50 s at the 10 s
-interval); a transient blip is silently absorbed, and a steady server never lags. Tune both in
-`constants.py` (set `CONFIRM_SWEEPS = 1` to disable the confirmation delay).
+genuine shutdown is therefore reported after up to `CONFIRM_SWEEPS` sweeps (**~20–25 s** at the
+default `CONFIRM_SWEEPS = 2` and 10 s interval); a transient blip is silently absorbed, and a
+steady server never lags. Tune both in `constants.py` — set `CONFIRM_SWEEPS = 1` for near-instant
+detection (the retry alone filters flaps), or raise it if flapping ever returns.
 
 ## Run it — Windows
 ```bat

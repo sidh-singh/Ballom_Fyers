@@ -35,7 +35,11 @@ TCP_TIMEOUT_SEC = 2                     # per-server service-port connect timeou
 # confirmation delay). Steady-state (all servers holding their status) is unaffected — no lag.
 PROBE_ATTEMPTS = 2                      # probe tries within one check before concluding DOWN
 PROBE_RETRY_GAP_SEC = 0.4              # pause (s) between those tries
-CONFIRM_SWEEPS = 3                      # consecutive agreeing sweeps required to commit a change
+# The retry above is the PRIMARY flap filter (a dropped ping is retried, so a healthy box reads
+# UP). CONFIRM_SWEEPS is a lighter second layer: a real restart must be caught, so keep this small
+# — 2 means a change shows after ~2 sweeps (~20-25s), still ignoring one-off single-sweep blips.
+# Set 1 for near-instant detection (relies on the retry alone); raise it if flapping ever returns.
+CONFIRM_SWEEPS = 2                      # consecutive agreeing sweeps required to commit a change
 
 RETENTION_DAYS = 7                      # keep exactly 1 week of history
 

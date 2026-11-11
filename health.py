@@ -25,16 +25,22 @@ _LOCAL_WINDOWS = platform.system() == "Windows"
 
 def _ping(ip: str, timeout: float = PING_TIMEOUT_SEC) -> tuple[bool, float | None]:
     """One ICMP echo. Returns (reachable, latency_ms). Ping flags depend on the LOCAL OS
-    (where this monitor runs), not the target."""
+    (where this monitor runs), not the target.
+
+    Reachability requires a GENUINE echo reply — verified by a 'TTL='/'ttl=' token in the output,
+    NOT just a zero exit code. This matters on Windows: `ping` exits 0 even for
+    'Reply from <gateway>: Destination host unreachable.' (an ICMP *error* — the box is actually
+    DOWN), which would otherwise be read as UP. Every real IPv4 echo reply carries a TTL, while
+    'timed out' / 'unreachable' lines do not, so this reads correctly on both Windows and Linux."""
     if _LOCAL_WINDOWS:
         cmd = ["ping", "-n", "1", "-w", str(int(timeout * 1000)), ip]
     else:
         cmd = ["ping", "-c", "1", "-W", str(max(1, int(timeout))), ip]
     t0 = time.monotonic()
     try:
-        r = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                           timeout=timeout + 3)
-        if r.returncode == 0:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 3)
+        out = f"{r.stdout or ''}{r.stderr or ''}".lower()
+        if r.returncode == 0 and "ttl=" in out:
             return True, round((time.monotonic() - t0) * 1000, 1)
     except Exception:
         pass
