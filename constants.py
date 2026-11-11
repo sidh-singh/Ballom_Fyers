@@ -25,6 +25,18 @@ DASHBOARD_REFRESH_MS = 5_000           # browser auto-refresh cadence (shows a c
 CHECK_INTERVAL_SEC = int(os.environ.get("CHECK_INTERVAL_SEC", "10"))   # seconds between full sweeps
 PING_TIMEOUT_SEC = 1.5                  # per-server ICMP ping timeout (fast fail = fast DOWN detect)
 TCP_TIMEOUT_SEC = 2                     # per-server service-port connect timeout
+
+# Flap-proofing (hysteresis) — a transient ICMP drop or a momentary TCP hiccup must NOT look like
+# a shutdown. Internet VPS commonly rate-limit ICMP and firewall RDP, so a single-sample check
+# flaps between UP/DOWN for a server that is actually fine. Two guards:
+#   1) each check retries the probe up to PROBE_ATTEMPTS times before calling a server DOWN;
+#   2) the monitor only RECORDS a status change after CONFIRM_SWEEPS consecutive agreeing sweeps.
+# A genuine change is therefore reported after up to CONFIRM_SWEEPS sweeps (set 1 to disable the
+# confirmation delay). Steady-state (all servers holding their status) is unaffected — no lag.
+PROBE_ATTEMPTS = 2                      # probe tries within one check before concluding DOWN
+PROBE_RETRY_GAP_SEC = 0.4              # pause (s) between those tries
+CONFIRM_SWEEPS = 3                      # consecutive agreeing sweeps required to commit a change
+
 RETENTION_DAYS = 7                      # keep exactly 1 week of history
 
 # Service port probed per target OS — confirms the box is actually serving even if

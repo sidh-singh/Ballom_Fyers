@@ -17,7 +17,8 @@ import socket
 import subprocess
 import time
 
-from constants import PING_TIMEOUT_SEC, TCP_TIMEOUT_SEC, SERVICE_PORT
+from constants import (PING_TIMEOUT_SEC, TCP_TIMEOUT_SEC, SERVICE_PORT,
+                       PROBE_ATTEMPTS, PROBE_RETRY_GAP_SEC)
 
 _LOCAL_WINDOWS = platform.system() == "Windows"
 
@@ -56,8 +57,19 @@ def check_server(server: dict) -> dict:
     os_type = server.get("os_type", "linux")
     port = SERVICE_PORT.get(os_type, 22)
 
-    reachable, ping_ms = _ping(ip)
-    port_open, port_ms = _tcp(ip, port)
+    # Retry the probe a few times before concluding DOWN, so a single dropped ICMP echo or a
+    # momentary TCP hiccup (common on internet VPS with rate-limited ICMP / firewalled RDP) does
+    # not masquerade as a shutdown. Declared UP the instant EITHER probe answers on ANY attempt;
+    # only an all-attempts failure counts as DOWN. (The monitor adds a second, cross-sweep guard.)
+    reachable = port_open = False
+    ping_ms = port_ms = None
+    for attempt in range(max(1, PROBE_ATTEMPTS)):
+        reachable, ping_ms = _ping(ip)
+        port_open, port_ms = _tcp(ip, port)
+        if reachable or port_open:
+            break
+        if attempt < PROBE_ATTEMPTS - 1:
+            time.sleep(PROBE_RETRY_GAP_SEC)
     up = reachable or port_open
     latency = ping_ms if ping_ms is not None else port_ms
 

@@ -26,7 +26,7 @@ except Exception:   # pragma: no cover
     _IST = None
 
 from constants import (
-    CHECK_INTERVAL_SEC, RETENTION_DAYS, HEALTH_DIR, CURRENT_FILE,
+    CHECK_INTERVAL_SEC, RETENTION_DAYS, HEALTH_DIR, CURRENT_FILE, CONFIRM_SWEEPS,
 )
 from servers import load_servers
 from health import check_server
@@ -85,7 +85,7 @@ def _prune() -> None:
                 pass
 
 
-def run_once(prev_status: dict, since_map: dict) -> None:
+def run_once(prev_status: dict, since_map: dict, streak: dict) -> None:
     servers = load_servers()
     if not servers:
         log.warning("ip_list.txt has no servers")
@@ -106,18 +106,37 @@ def run_once(prev_status: dict, since_map: dict) -> None:
     out_servers = []
     for r in results:
         name = r["name"]
-        prev = prev_status.get(name)
-        if prev is not None and prev != r["status"]:
+        raw = r["status"]                       # this sweep's (already-retried) observation
+        committed = prev_status.get(name)        # last CONFIRMED status (None = never seen before)
+
+        # Hysteresis: a status CHANGE is only committed after CONFIRM_SWEEPS consecutive sweeps
+        # agree on the new value. Count the run of identical raw observations.
+        s = streak.get(name)
+        if s and s["cand"] == raw:
+            s["n"] += 1
+        else:
+            s = {"cand": raw, "n": 1}
+        streak[name] = s
+
+        if committed is None:                    # first ever sight → accept immediately
+            new = raw
+        elif raw != committed and s["n"] >= CONFIRM_SWEEPS:
+            new = raw                            # change confirmed by enough consecutive sweeps
+        else:
+            new = committed                      # hold the confirmed status (absorb the blip)
+
+        if committed is not None and new != committed:
             day["events"].append({"at": ts, "name": name, "ip": r["ip"],
-                                  "os_type": r["os_type"], "from": prev, "to": r["status"]})
+                                  "os_type": r["os_type"], "from": committed, "to": new})
             since_map[name] = ts
-            log.info("%s %s -> %s", name, prev, r["status"])
+            log.info("%s %s -> %s (confirmed after %d sweeps)", name, committed, new, s["n"])
         since_map.setdefault(name, ts)
-        day["baseline"].setdefault(name, r["status"])
-        prev_status[name] = r["status"]
+        day["baseline"].setdefault(name, new)
+        prev_status[name] = new
+        r["status"] = new                        # dashboard shows the DEBOUNCED status
         r["checked_at"] = ts
         r["since"] = since_map[name]
-        up += 1 if r["status"] == "UP" else 0
+        up += 1 if new == "UP" else 0
         out_servers.append(r)
 
     _write_json(_day_file(today), day)
@@ -136,11 +155,14 @@ def main() -> None:
     prev = _read_json(CURRENT_FILE, {})
     prev_status = {s["name"]: s.get("status") for s in prev.get("servers", [])}
     since_map = {s["name"]: s.get("since", _ts()) for s in prev.get("servers", [])}
+    # seed the streak as "settled" on each server's last confirmed status, so only a genuine
+    # CHANGE after a restart needs CONFIRM_SWEEPS to re-confirm (not the unchanged status).
+    streak = {n: {"cand": st, "n": CONFIRM_SWEEPS} for n, st in prev_status.items() if st}
     log.info("health monitor started — %d server(s), every %ss, data=%s",
              len(load_servers()), CHECK_INTERVAL_SEC, HEALTH_DIR)
     while True:
         try:
-            run_once(prev_status, since_map)
+            run_once(prev_status, since_map, streak)
         except Exception as e:
             log.exception("check cycle failed: %s", e)
         time.sleep(CHECK_INTERVAL_SEC)

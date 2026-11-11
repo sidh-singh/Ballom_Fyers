@@ -52,6 +52,15 @@ Each server is **UP** if **either** an ICMP **ping** succeeds **or** its **servi
 shutdown / unreachable box even if ICMP is firewalled. *(Deeper checks — a specific service
 running, CPU/RAM — would need login credentials; `health.py` is the one place to extend.)*
 
+**Flap-proofing (no false "down" blips).** Internet VPS routinely rate-limit ICMP and firewall
+RDP, so a single dropped ping on an otherwise-healthy box used to register a spurious DOWN — and
+then UP again on the next sweep, repeating many times a day. Two guards prevent this: each check
+**retries the probe** up to `PROBE_ATTEMPTS` times before concluding DOWN, and the monitor only
+**records a status change after `CONFIRM_SWEEPS` consecutive agreeing sweeps** (hysteresis). A
+genuine shutdown is therefore reported after up to `CONFIRM_SWEEPS` sweeps (~30–50 s at the 10 s
+interval); a transient blip is silently absorbed, and a steady server never lags. Tune both in
+`constants.py` (set `CONFIRM_SWEEPS = 1` to disable the confirmation delay).
+
 ## Run it — Windows
 ```bat
 start_all.bat            REM starts the monitor (new window) + the dashboard
