@@ -132,5 +132,8 @@ hash.
   the brake.
 - **＋ Add demo balance** (demo branches only): an amount box + button tops up the
   simulated balance.
-- **View date** (top-right): Today + the previous 6 days. Pick a past date to replay that
-  day's price chart, trades, booked P&L and strategy log. History is kept for ~1 week.
+- **View date** (top-right): defaults to **Today** and always re-anchors to today on a page
+  load / refresh / restore — a tab left open overnight never opens on a stale day, and if it is
+  still showing the auto "today" when the clock crosses midnight it rolls forward on its own. Pick
+  a past date (today + the previous 6 days) to replay that day's price chart, trades, booked P&L
+  and strategy log; an explicit pick is kept until you reload the page. History is kept for ~1 week.
