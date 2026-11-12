@@ -242,14 +242,14 @@ class Strategy:
 
         in_position = (buy_count + sell_count) > 0
 
-        # OPEN score (INDEX H4+M5) — kept ONLY as the DCA ladder-add trend filter.
+        # OPEN score (INDEX H1+M15) — kept ONLY as the DCA ladder-add trend filter.
         open_score = self._weighted_score(slopes, OPEN_SCORE_WEIGHTS, grey_fill=True)
 
         # Active-leg polarity for the index backup: CE basket = +1 (tracks index), PE = -1 (inverse),
         # flat = 0. Both legs are LONG options, so every exit condition is identical for CE and PE.
         act_pol = 1 if buy_count > 0 else (-1 if sell_count > 0 else 0)
 
-        # ── FORCE-CLOSE = trend-reversal stop on the ACTIVE option LEG's OWN chart (M15·H1·H4, 4/3/2).
+        # ── FORCE-CLOSE = trend-reversal stop on the ACTIVE option LEG's OWN M15 chart (single-TF leg reversal).
         # Per TF: the leg's own decisive slope; if that TF is grey/indecisive, borrow the INDEX's
         # same-TF decisive slope (polarity-adjusted). A reversal AGAINST a long option is the option
         # turning DOWN → fc_score ≤ -FORCE_CLOSE_S fires for BOTH CE and PE (no mirrored sign). No M5
@@ -264,25 +264,25 @@ class Strategy:
         sell_fc = exit_allowed and sell_count > 0 and (fc_score <= -FORCE_CLOSE_S)
 
         # ── BOOK (NETTING profit exit): a DOWNWARD M5 reversal of the ACTIVE long option — the leg's
-        # own M5, else the INDEX M5 (polarity). Identical sign for CE and PE. book_rev < 0 = reversing
+        # own M15, else the INDEX M15 (polarity). Identical sign for CE and PE. book_rev < 0 = reversing
         # down (both M5 slopes), ×2 only for the dashboard scale.
-        book_rev = self._decisive(leg_slopes, 'M5')
+        book_rev = self._decisive(leg_slopes, 'M15')
         if book_rev == 0 and act_pol != 0:
-            book_rev = self._decisive(slopes, 'M5') * act_pol
+            book_rev = self._decisive(slopes, 'M15') * act_pol
         book_score = book_rev * 2
 
-        # ── FRESH-ENTRY gate (while FLAT): INDEX H4 sets direction (H4 → H1 backup); then the CANDIDATE
-        # leg must be ADVANCING on H4 and M5. Each confirm walks Leg-own → finer/Index(polarity):
-        #   H4 confirm: leg H4 → leg H1 → index H1(pol)
-        #   M5 confirm: leg M5 → index M5(pol) → leg M1 → index M1(pol)
-        idx_dir = self._decisive(slopes, 'H4') or self._decisive(slopes, 'H1')
+        # ── FRESH-ENTRY gate (while FLAT): INDEX H1 sets direction; then the CANDIDATE
+        # leg must be ADVANCING on H1 and M15. Each confirm walks Leg-own -> coarser/Index(polarity):
+        #   H1 confirm: leg H1 -> leg H4 -> index H1(pol)
+        #   M15 confirm: leg M15 -> index M15(pol) -> leg M5
+        idx_dir = self._decisive(slopes, 'H1')
         _pol = idx_dir if idx_dir != 0 else 1
-        h4_ok = self._resolve_confirm(cand_leg_slopes, slopes, _pol,
-                                      [('leg', 'H4'), ('leg', 'H1'), ('idx', 'H1')])
-        m5_ok = self._resolve_confirm(cand_leg_slopes, slopes, _pol,
-                                      [('leg', 'M5'), ('idx', 'M5'), ('leg', 'M1'), ('idx', 'M1')])
-        new_entry = ('BUY' if (idx_dir > 0 and h4_ok == 1 and m5_ok == 1)
-                     else ('SELL' if (idx_dir < 0 and h4_ok == 1 and m5_ok == 1) else None))
+        h1_ok = self._resolve_confirm(cand_leg_slopes, slopes, _pol,
+                                      [('leg', 'H1'), ('leg', 'H4'), ('idx', 'H1')])
+        m15_ok = self._resolve_confirm(cand_leg_slopes, slopes, _pol,
+                                      [('leg', 'M15'), ('idx', 'M15'), ('leg', 'M5')])
+        new_entry = ('BUY' if (idx_dir > 0 and h1_ok == 1 and m15_ok == 1)
+                     else ('SELL' if (idx_dir < 0 and h1_ok == 1 and m15_ok == 1) else None))
         entry_direction = new_entry or 'WAIT'               # dashboard display
         entry_chop_block = False
 
