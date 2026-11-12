@@ -7,6 +7,24 @@ Format: `YYYY-MM-DD` — change — _why_.
 
 ---
 
+## 2026-11-13 — Pair lock: keep a CARRIED-OVER position's pair until a new flat day (restart-safe)
+
+Extends the day-lock: a position **carried over from the previous day** (including across an engine
+restart) now keeps its CE/PE pair LOCKED — the bot does NOT fetch a new pair just because the date
+rolled while a position is open; it only re-scans on a genuinely new day that STARTS flat.
+
+- `symbol_worker._recover_active` (adopts a carried position on startup) now rebuilds `_last_pair` from
+  the held leg (opposite leg = same strike, other type), so after a restart `_get_display_pair` returns
+  the carried pair instead of re-scanning a new one.
+- `_get_display_pair` now HARD-LOCKS the pair whenever a position is open: the lock's day is refreshed
+  each tick while holding (so a midnight carry-over keeps the same pair), and a hard lock ignores the
+  `PAIR_RELOCK_SECONDS` timer — so after the carried basket closes, the SAME pair is kept for the rest
+  of that day; only a new FLAT day triggers a fresh scan. A fresh speculative (never-traded) pair is
+  NOT hard-locked, so "re-scan until a tradeable pair is found" is unchanged.
+
+New field `_locked_hard`. Verified with a carry / restart / midnight state-machine test. Applies to all
+8 netting + hedging branches. **Engine restart required.**
+
 ## 2026-11-12 — Pair LOCK: stick to one CE/PE pair per day + skip illiquid strikes
 
 The CE/PE pair the bot trades is now **locked for the trading day** instead of re-scanned every few
