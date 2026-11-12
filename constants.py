@@ -272,13 +272,13 @@ MACD_SIGNAL = 9                # signal EMA length
 # Each decision SECTION has its OWN timeframe set; its score is the RAW weighted sum,
 # range ±(2*Σ|weight|). Thresholds below are in those RAW units — change a section's
 # timeframes and re-check its threshold.
-ENTRY_S       = 2              # |open_score| to OPEN. OPEN range ±4 (H4+M5, w1+w1); +2 = one TF fully aligned.
+ENTRY_S       = 2              # |open_score| to OPEN. OPEN range ±4 (H1+M15, w1+w1); +2 = one TF fully aligned.
 ENTRY_AGREE_S = 0              # agreement gate: force-close score must not oppose the open (BUY needs fc_score >= +0).
 LADDER_S      = 2              # DCA ladder add blocked once OPEN score is this far adverse (BUY add needs open_score > -2).
-FORCE_CLOSE_S = 12             # force-close when the INDEX FORCE-CLOSE score (M15·H1·H4 = 4/3/2,
-                               # range ±18) is this far AGAINST the basket — a high-conviction MULTI-TF
-                               # reversal, NOT a single-M15 trigger, so it doesn't pre-empt the RSI DCA
-                               # ladder (faithful to Alcadeias). BUY close fc_score <= -12, SELL >= +12.
+FORCE_CLOSE_S = 2              # force-close on the ACTIVE LEG's M15 reversal. fc_score = {'M15':1}
+                               # weighted (range +/-2); fires when BOTH M15 slopes (RSI+MACD) turn
+                               # against the basket -- BUY/CE close at fc_score <= -2, SELL/PE at >= +2.
+                               # SINGLE-TF M15 trigger (owner 2026-11-12); was MULTI-TF M15/H1/H4 (12).
 
 # Force-close loss FLOOR (₹ per unit): don't stop a basket out while its loss is still smaller than
 # FC_MIN_LOSS_PER_UNIT × units — let a shallow dip recover / average instead of booking a tiny churn
@@ -289,12 +289,12 @@ BOOK_S        = 2              # profit-book (NETTING only): in profit, book whe
                                # reverse (range ±2 for {M5}; BUY book_score <= -2).
 
 # ── Per-section timeframe weights (config-driven). Short keys M5/M15/H1/H4/D1. ──
-#   OPEN        -> fresh entry + the DCA ladder-add gate               : H4 + M5   (grey_fill on)
-#   BOOK        -> profit-book (NETTING only; HEDGING books via the ₹ target) : M5 (grey_fill on; BOOK_S=2 → both reverse)
+#   OPEN        -> fresh entry + the DCA ladder-add gate               : H1 + M15  (grey_fill on)
+#   BOOK        -> profit-book (NETTING only; HEDGING books via the ₹ target) : M15 (grey_fill on; BOOK_S=2 → both reverse)
 #   FORCE_CLOSE -> force-close + the entry agreement-gate veto          : M15      (raw signs; FORCE_CLOSE_S=2 → both reverse)
-OPEN_SCORE_WEIGHTS        = {'H4': 1, 'M5': 1}
-BOOK_SCORE_WEIGHTS        = {'M5': 1}
-FORCE_CLOSE_SCORE_WEIGHTS = {'M15': 4, 'H1': 3, 'H4': 2}            # Alcadeias multi-TF (index), ±18 (D1 dropped)
+OPEN_SCORE_WEIGHTS        = {'H1': 1, 'M15': 1}
+BOOK_SCORE_WEIGHTS        = {'M15': 1}
+FORCE_CLOSE_SCORE_WEIGHTS = {'M15': 1}                              # single-TF: ACTIVE leg's M15 reversal (owner 2026-11-12)
 
 # Slope fetch list (auto-derived union of every TF named in any section above),
 # mapped short-key -> 'TIMEFRAME_<key>'. Adding a TF to a section dict is enough.
@@ -311,7 +311,7 @@ LEG_SLOPE_TIMEFRAMES = ['TIMEFRAME_' + _tf for _tf in dict.fromkeys(
 )]                                                           # + FORCE-CLOSE (M15·H1·H4) — both on the leg
 # CANDIDATE-leg slope set, computed while FLAT to gate a fresh entry: the option leg's own H4 + M5
 # (both RSI+MACD must be +ve), plus M15 for the anti-vibration check (must not already be reversing).
-OPEN_LEG_TIMEFRAMES = ['TIMEFRAME_H4', 'TIMEFRAME_H1', 'TIMEFRAME_M5', 'TIMEFRAME_M1']   # candidate-leg entry gate + H1/M1 grey backups
+OPEN_LEG_TIMEFRAMES = ['TIMEFRAME_H1', 'TIMEFRAME_H4', 'TIMEFRAME_M15', 'TIMEFRAME_M5']   # candidate-leg entry gate (H1+M15) + H4/M5 grey backups
 
 # ── Pivot-slope params (RSI + MACD-histogram) ──
 PEAK_LOOKBACK = 20             # candles scanned for the latest pivot
