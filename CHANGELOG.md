@@ -1,5 +1,30 @@
 # CHANGELOG — `fyers_live` / `fyers_demo`
 
+## 2026-11-12 — Strategy timeframes: entry H1/H1/M15, exits on M15 (owner testing)
+
+Shifted the RSI+MACD slope strategy's decision timeframes (all 8 netting+hedging branches, live+demo,
+Windows+Linux):
+
+**Fresh-entry gate: H4 → H1 (index + leg), M5 → M15.** Was index-H4 direction + candidate-leg H4 + leg
+M5. Now **index-H1 direction + candidate-leg H1 + leg M15.** In `strategy.py` (`idx_dir`/`h1_ok`/`m15_ok`)
+plus the fetch sets in `constants.py`: `OPEN_SCORE_WEIGHTS {H4,M5}→{H1,M15}` (the INDEX now fetches H1/M15,
+and the DCA ladder-add trend filter shifts to H1+M15 too) and `OPEN_LEG_TIMEFRAMES → [H1,H4,M15,M5]`
+(candidate leg fetches M15).
+
+**Force-close → single-TF M15 (both variants).** Cross-check correction: the force-close was NOT M5 — it
+was a MULTI-TF `M15·H1·H4` (4/3/2, ±18, threshold 12) leg reversal. Per owner, reduced to a pure **M15
+leg reversal**: `FORCE_CLOSE_SCORE_WEIGHTS {M15:4,H1:3,H4:2}→{M15:1}`, `FORCE_CLOSE_S 12→2` — stops out
+when BOTH M15 slopes (RSI+MACD) turn against the basket (fc_score ≤ −2), no higher-TF confirmation. More
+sensitive than before (closer to the earlier hair-trigger) — intentional, owner is testing.
+
+**Netting BOOK → M15** (netting only). The netting profit-book leg-reversal moves `M5 → M15`
+(`book_rev = _decisive(leg_slopes,'M15')`, `BOOK_SCORE_WEIGHTS {M5}→{M15}`); still books only when in
+profit past the ₹ target AND M15 reverses down. Hedging keeps only its ₹-target exit (no book).
+
+Structure unchanged (netting = book + force-close; hedging = force-close only). Verified: entry fires on
+H1+H1+M15, WAITs on grey; force-close fires on an M15 reversal; target-book intact. **Engine must be
+RESTARTED on each machine to take effect.**
+
 ## 2026-11-12 — Scanner: deterministic strike selection (netting & hedging pick the SAME pair)
 
 **Problem:** netting and hedging (run on separate machines) were picking DIFFERENT CE/PE strikes, so
