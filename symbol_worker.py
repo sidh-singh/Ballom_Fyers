@@ -85,6 +85,8 @@ class SymbolWorker(threading.Thread):
         self._locked_pair = None            # CE/PE pair locked for the trading day (re-scanned per cycle)
         self._locked_at = 0.0               # monotonic when the current pair was locked
         self._locked_day = None             # IST date the pair was locked (re-scan on a new day)
+        self._locked_hard = False           # True while/after a position traded or was CARRIED on this
+                                            # pair -> hold it the WHOLE day (ignore the re-lock timer)
 
     # ── thread main ─────────────────────────────────────────────────────────
     def run(self) -> None:
@@ -572,17 +574,22 @@ class SymbolWorker(threading.Thread):
         has elapsed or the day rolls over, so the bot STICKS to one pair instead of drifting every few
         minutes (two bots on the same clock pick the same one). A scan that returns nothing valid keeps
         the current lock (retry next tick), so a transient empty scan never drops the day's pair."""
-        if self.active and self._last_pair:
-            return self._last_pair
         now = monotonic()
         today = now_ist().date().isoformat()
+        if self.active and self._last_pair:
+            # holding a position (incl. a carried-over one) -> hard-lock its pair for TODAY; the daily
+            # refresh means a midnight carry keeps the SAME pair, and after it closes we hold that pair
+            # until a genuinely new FLAT day (no re-scan just because the date rolled while holding).
+            self._locked_pair, self._locked_day, self._locked_hard = self._last_pair, today, True
+            return self._last_pair
         if (self._locked_pair and self._locked_day == today
-                and (PAIR_RELOCK_SECONDS <= 0 or (now - self._locked_at) < PAIR_RELOCK_SECONDS)):
+                and (self._locked_hard or PAIR_RELOCK_SECONDS <= 0
+                     or (now - self._locked_at) < PAIR_RELOCK_SECONDS)):
             return self._locked_pair
         lot_df = self.ctx.commodity_df if self.asset_type == "COMMODITY" else self.ctx.option_df
         pair = scanner.scan_best_pair(self.cfg, self.ctx.api, self.ctx.meter, lot_df=lot_df)
         if pair and pair.get("CE_Symbol") and pair.get("PE_Symbol"):
-            self._locked_pair, self._locked_at, self._locked_day = pair, now, today
+            self._locked_pair, self._locked_at, self._locked_day, self._locked_hard = pair, now, today, False
             return pair
         return self._locked_pair          # scan empty/failed -> keep the day's pair, retry next tick
 
@@ -729,6 +736,13 @@ class SymbolWorker(threading.Thread):
                     if not side:
                         continue
                     self.active = {"side": side, "symbol": row.get("symbol")}
+                    _full = row.get("symbol") or ""                        # rebuild the carried PAIR from the
+                    _opp = _full[:-2] + ("PE" if side == "CE" else "CE")   # held leg (opposite = same strike,
+                    self._last_pair = {                                    # other type) so _get_display_pair
+                        "CE_Symbol": _full if side == "CE" else _opp,      # returns it and does NOT re-scan a
+                        "PE_Symbol": _full if side == "PE" else _opp,      # new pair while holding an overnight
+                        "Debug": "carried (adopted on startup)",           # carry (until a new flat day).
+                    }
                     self._entry_mono = monotonic()   # min-hold from adoption (avoid an instant exit on a stale leg pivot after restart)
                     avg = float(row.get("netAvg", row.get("buyAvg", 0.0)) or 0.0)
                     self.ctx.tracker.seed_from_broker(row.get("symbol"), abs(net), avg,
