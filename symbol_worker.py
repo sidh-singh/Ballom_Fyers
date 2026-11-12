@@ -33,7 +33,7 @@ from constants import (
     MACD_FAST, MACD_SLOW, MACD_SIGNAL,
     SLOPE_TIMEFRAMES, LEG_SLOPE_TIMEFRAMES, OPEN_LEG_TIMEFRAMES,
     PEAK_LOOKBACK, PIVOT_WIDTH, RSI_PEAK_OB, RSI_PEAK_OS, RSI_GRAPH_BARS,
-    REENTRY_COOLDOWN_SECONDS, MIN_HOLD_SECONDS,
+    REENTRY_COOLDOWN_SECONDS, MIN_HOLD_SECONDS, PAIR_RELOCK_SECONDS,
     STEP_UP_BALANCE, UNIT_MAX_LIMIT, HEDGE_PER_UNIT,
     estimate_trade_charges,
 )
@@ -82,7 +82,9 @@ class SymbolWorker(threading.Thread):
         self._pair_ttl = 300                # display-scan cache TTL (s)
         self._resolved_on = None            # IST date the commodity future was last resolved
         self._last_pair = None              # pair of the open basket (for display)
-        self._pair_cache = None             # (fetch_monotonic, pair) — cached display scan when flat
+        self._locked_pair = None            # CE/PE pair locked for the trading day (re-scanned per cycle)
+        self._locked_at = 0.0               # monotonic when the current pair was locked
+        self._locked_day = None             # IST date the pair was locked (re-scan on a new day)
 
     # ── thread main ─────────────────────────────────────────────────────────
     def run(self) -> None:
@@ -565,17 +567,24 @@ class SymbolWorker(threading.Thread):
         return {"rsi": r, "macd": m}
 
     def _get_display_pair(self):
-        """Best CE/PE pair for the dashboard: the open basket's pair if in a trade,
-        else a cached speculative scan (refreshed per _pair_ttl to bound API cost)."""
+        """CE/PE pair used for entries + the dashboard. In a trade -> the open basket's pair.
+        Otherwise the pair is LOCKED for the trading day and only re-scanned once PAIR_RELOCK_SECONDS
+        has elapsed or the day rolls over, so the bot STICKS to one pair instead of drifting every few
+        minutes (two bots on the same clock pick the same one). A scan that returns nothing valid keeps
+        the current lock (retry next tick), so a transient empty scan never drops the day's pair."""
         if self.active and self._last_pair:
             return self._last_pair
         now = monotonic()
-        if self._pair_cache and (now - self._pair_cache[0]) < self._pair_ttl:
-            return self._pair_cache[1]
+        today = now_ist().date().isoformat()
+        if (self._locked_pair and self._locked_day == today
+                and (PAIR_RELOCK_SECONDS <= 0 or (now - self._locked_at) < PAIR_RELOCK_SECONDS)):
+            return self._locked_pair
         lot_df = self.ctx.commodity_df if self.asset_type == "COMMODITY" else self.ctx.option_df
         pair = scanner.scan_best_pair(self.cfg, self.ctx.api, self.ctx.meter, lot_df=lot_df)
-        self._pair_cache = (now, pair)
-        return pair
+        if pair and pair.get("CE_Symbol") and pair.get("PE_Symbol"):
+            self._locked_pair, self._locked_at, self._locked_day = pair, now, today
+            return pair
+        return self._locked_pair          # scan empty/failed -> keep the day's pair, retry next tick
 
     def _signal_payload(self, ad, buy_pos, sell_pos, buy_signal, sell_signal) -> dict:
         """Build the per-symbol dashboard payload (signal + slope scores + RSI + pair + position)."""
