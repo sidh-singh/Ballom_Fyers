@@ -147,8 +147,10 @@ def _pick_deterministic(chain, spot: float, round_step: float):
             strike = float(o.get("strike_price", 0) or 0)
             ltp = float(o.get("ltp", 0) or 0)
             sym = o.get("symbol", "")
-            if strike <= 0 or ltp <= 0 or not sym:
-                continue
+            oi = float(o.get("oi", 0) or 0)
+            vol = float(o.get("volume", 0) or 0)
+            if strike <= 0 or ltp <= 0 or not sym or (oi <= 0 and vol <= 0):
+                continue    # skip illiquid strikes -> pick the nearest TRADEABLE strike to target
             d = abs(strike - target)
             if best is None or d < best[0] or (d == best[0] and strike < best[1]):
                 best = (d, strike, ltp, sym)
