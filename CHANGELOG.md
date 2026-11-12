@@ -7,6 +7,25 @@ Format: `YYYY-MM-DD` — change — _why_.
 
 ---
 
+## 2026-11-12 — Pair LOCK: stick to one CE/PE pair per day + skip illiquid strikes
+
+The CE/PE pair the bot trades is now **locked for the trading day** instead of re-scanned every few
+minutes while flat. `symbol_worker._get_display_pair` keeps the chosen pair until `PAIR_RELOCK_SECONDS`
+(default **4h**) elapses or the day rolls over, then re-scans; a scan that returns nothing valid keeps
+the current pair (retries next tick), so a transient empty scan never drops the day's pair. Once a basket
+is open it already uses that basket's pair — unchanged.
+
+The deterministic strike picker (`scanner._pick_deterministic`) now also **skips illiquid strikes** (oi
+AND volume both 0), landing on the nearest *tradeable* round strike to spot instead of a dead one —
+i.e. "re-scan for a better pair until you find one to trade."
+
+New constant `PAIR_RELOCK_SECONDS` (constants.py; 0 = re-scan every tick / old behaviour). Applies to all
+8 netting + hedging branches (live+demo, Windows+Linux). **Engine restart required** to take effect.
+
+Convergence note: two bots (netting vs hedging) that lock at the same wall-clock minute pick the same
+pair (deterministic), so they stay aligned; if they ever lock on opposite sides of a round-strike
+boundary, lower `PAIR_RELOCK_SECONDS` so they re-converge sooner.
+
 ## 2026-11-12 — Strategy timeframes: entry H1/H1/M15, exits on M15 (owner testing)
 
 Shifted the RSI+MACD slope strategy's decision timeframes (all 8 netting+hedging branches, live+demo,

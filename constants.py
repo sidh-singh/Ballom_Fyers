@@ -314,6 +314,10 @@ RSI_PEAK_OB   = 60             # a HIGH pivot on RSI counts only if value >= thi
 RSI_PEAK_OS   = 40             # a LOW  pivot on RSI counts only if value <= this
 RSI_GRAPH_BARS = 40            # bars each dashboard RSI/MACD pivot mini-chart plots (> PEAK_LOOKBACK)
 
+# Keep the SAME CE/PE pair this long (seconds) while FLAT before re-scanning: the bot STICKS to one
+# pair for the trading day instead of drifting every few minutes (and re-scans on a new day too). A
+# scan that returns nothing keeps the current pair and retries next tick. 0 = re-scan every tick.
+PAIR_RELOCK_SECONDS = 14400    # 4h (owner 2026-11-12)
 REENTRY_COOLDOWN_SECONDS = 600 # block a fresh entry for this long after any close (raised 300→600 to cut re-entry churn)
 MIN_HOLD_SECONDS = 180         # after an entry, suppress BOOK + FORCE-CLOSE for this long so the
                                # basket can't open-then-close on a stale leg pivot (anti-vibration).
