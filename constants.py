@@ -162,7 +162,7 @@ SCAN_ROLL_DTE     = 14     # month-end roll threshold: pick the nearest MONTH-EN
                            # that is ≥ this many days out; if the current month-end is closer than
                            # this (< 2 weeks) roll to next month's month-end. See scan_best_pair.
 SCAN_MIN_OI       = 10000  # skip illiquid strikes (unless they have volume)
-SCAN_MAX_PREMIUM_PER_LOT = 30000   # ₹ — skip strikes whose premium × lot_size EXCEEDS this
+SCAN_MAX_PREMIUM_PER_LOT = 40000   # ₹ — skip strikes whose premium × lot_size EXCEEDS this
                                    # (per-lot cost cap). 0 = no cap.
 SCAN_MIN_PREMIUM_PER_LOT = 10000   # ₹ — skip strikes whose premium × lot_size is BELOW this,
                                    # so we buy near-ATM options with real value / history (not
