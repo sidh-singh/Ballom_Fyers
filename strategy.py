@@ -354,6 +354,9 @@ class Strategy:
             'entry_direction': entry_direction or 'WAIT',
             'new_entry': new_entry or 'WAIT',
             'cand_leg_slopes': cand_leg_slopes or {},
+            'idx_dir': idx_dir,            # entry gate: INDEX H1 direction (+1 up / -1 down / 0 flat)
+            'h1_ok': int(h1_ok),           # candidate leg advancing on H1 (1 = yes)
+            'm15_ok': int(m15_ok),         # candidate leg advancing on M15 (1 = yes)
             'open_score': round(open_score, 1),
             'book_score': round(book_score, 1),
             'fc_score': round(fc_score, 1),
