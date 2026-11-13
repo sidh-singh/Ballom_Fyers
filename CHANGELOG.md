@@ -1,5 +1,23 @@
 # CHANGELOG — `fyers_live` / `fyers_demo`
 
+## 2026-11-13 — Scanner: relaxed fallback so a thin chain never returns SCAN_EMPTY (try next-best)
+
+When the strict filters (OI >= SCAN_MIN_OI, premium band) excluded EVERY strike — common for GOLD/SILVER
+(MCX) options, whose OI/premium sit below the NIFTY-tuned bars — `scan_best_pair` returned None, logged
+SCAN_EMPTY, and the symbol didn't trade. Worse, on the netting/hedging deterministic path an empty scan
+left `_get_display_pair()` with no candidate leg, so the entry gate silently WAITed (no log after
+DAILY_MAINTENANCE_OK).
+
+Fix — the scan now falls back to the NEXT-BEST candidate instead of giving up:
+- **Deterministic (netting/hedging):** `_pick_deterministic` prefers the nearest LIQUID strike, then
+  RELAXES to the nearest PRICED strike (ltp > 0) if none near the target is liquid. Returns None only
+  when a side has no priced strike at all (genuinely empty chain / off-hours).
+- **Liquidity (plain fyers):** the per-side ranking tries the strict filters first, then re-ranks with
+  the OI + premium filters RELAXED, so a tradeable candidate is still found.
+
+Net: GOLD/SILVER (and any thin chain) now get a pair; NIFTY is unchanged (its round strikes are liquid).
+Applies to all 12 branches. **Engine restart required.**
+
 ## 2026-11-12 — Dashboard: "View date" defaults to today on every load / refresh (+ midnight roll-over)
 
 The **View date** picker was frozen to the day the dashboard *process* started — the layout baked

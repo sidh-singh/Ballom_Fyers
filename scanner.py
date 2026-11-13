@@ -84,7 +84,7 @@ def _default_round_step(underlying: str) -> int:
 
 
 def _score(o: dict, spot: float, otype: str, lot_size, max_per_lot: float,
-           min_per_lot: float, round_step: float):
+           min_per_lot: float, round_step: float, relaxed: bool = False):
     ltp = float(o.get("ltp", 0) or 0)
     oi = float(o.get("oi", 0) or 0)
     vol = float(o.get("volume", 0) or 0)
@@ -93,16 +93,17 @@ def _score(o: dict, spot: float, otype: str, lot_size, max_per_lot: float,
     strike = float(o.get("strike_price", 0) or 0)
     if ltp <= 0 or strike <= 0:
         return None
-    if oi < SCAN_MIN_OI and vol <= 0:          # illiquid
-        return None
-    # Per-lot premium BAND: skip strikes that cost more than the cap or less than the floor,
-    # so we land near-ATM options with real value / history (not cheap far-OTM). Needs lot_size.
-    if lot_size:
-        per_lot = ltp * lot_size
-        if max_per_lot and per_lot > max_per_lot:
+    if not relaxed:                            # strict pass; the RELAXED fallback drops these filters
+        if oi < SCAN_MIN_OI and vol <= 0:          # illiquid
             return None
-        if min_per_lot and per_lot < min_per_lot:
-            return None
+        # Per-lot premium BAND: skip strikes that cost more than the cap or less than the floor,
+        # so we land near-ATM options with real value / history (not cheap far-OTM). Needs lot_size.
+        if lot_size:
+            per_lot = ltp * lot_size
+            if max_per_lot and per_lot > max_per_lot:
+                return None
+            if min_per_lot and per_lot < min_per_lot:
+                return None
     score = (_moneyness(strike, spot, otype) * 0.30     # closeness to ATM (slight-OTM preferred)
              + _roundness(strike, round_step) * 0.20    # prefer round (liquid, long-history) strikes
              + _spread_eff(bid, ask) * 0.20             # tight spread
@@ -168,15 +169,21 @@ def scan_best_pair(symbol_cfg: dict, api, meter=None, lot_df=None) -> dict | Non
         best = {}
         for otype in ("CE", "PE"):
             ranked = []
-            for o in chain:
-                if o.get("option_type") != otype:
-                    continue
-                s = _score(o, spot, otype, _lot(o.get("symbol", ""), lot_df),
-                           max_per_lot, min_per_lot, round_step)
-                if s:
-                    ranked.append((s[0], o, s[1], s[2]))
+            for _relaxed in (False, True):      # strict first; if NOTHING passes, RELAX (thin chains)
+                for o in chain:
+                    if o.get("option_type") != otype:
+                        continue
+                    s = _score(o, spot, otype, _lot(o.get("symbol", ""), lot_df),
+                               max_per_lot, min_per_lot, round_step, relaxed=_relaxed)
+                    if s:
+                        ranked.append((s[0], o, s[1], s[2]))
+                if ranked:
+                    if _relaxed:
+                        logger.info("scan(%s): %s via RELAXED filters (no strict candidate)",
+                                    symbol_cfg.get("symbol"), otype)
+                    break
             if not ranked:
-                logger.info("scan(%s): no %s candidate", symbol_cfg.get("symbol"), otype)
+                logger.info("scan(%s): no %s candidate (even relaxed)", symbol_cfg.get("symbol"), otype)
                 return None
             ranked.sort(key=lambda x: x[0], reverse=True)
             best[otype] = ranked[0]
