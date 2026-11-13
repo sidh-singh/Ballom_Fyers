@@ -7,6 +7,21 @@ Format: `YYYY-MM-DD` — change — _why_.
 
 ---
 
+## 2026-11-13 — Docs: refresh TRADING_LOGIC + DASHBOARD to the current strategy
+
+Synced the reference docs with the recent code (each change was already in this CHANGELOG; this aligns
+the docs):
+- **TRADING_LOGIC.md** (netting/hedging): entry gate is now **index-H1 + leg-H1 + leg-M15** (was
+  H4/H4/M5); force-close is a **single-TF M15** stop (was M15.H1.H4, threshold 12 -> 2); `open_score`
+  + slope sources on **H1+M15**; the scan section documents the **deterministic strike pick + liquid->
+  priced relaxed fallback + per-day pair lock + carried-over pair lock**, premium cap **Rs40k**; the
+  netting book-reversal sibling note M5 -> **M15**.
+- **DASHBOARD.md** (netting/hedging): new **"why (not) trading"** diagnostics + entry-gate flags, and
+  the per-TF slope readout (M5/M15/H1/H4 via `DISPLAY_TFS`).
+- Plain `fyers_*` (HAM): premium cap 40k + relaxed-scan note.
+
+Docs only; no code change.
+
 ## 2026-11-13 — Dashboard: full per-TF slopes restored + "why not trading" diagnostics; premium 40k
 
 1. **Leg slopes restored (M5/M15/H1/H4).** The force-close->M15 change had collapsed
