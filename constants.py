@@ -162,7 +162,7 @@ SCAN_ROLL_DTE     = 14     # month-end roll threshold: pick the nearest MONTH-EN
                            # that is ≥ this many days out; if the current month-end is closer than
                            # this (< 2 weeks) roll to next month's month-end. See scan_best_pair.
 SCAN_MIN_OI       = 10000  # skip illiquid strikes (unless they have volume)
-SCAN_MAX_PREMIUM_PER_LOT = 30000   # ₹ — skip strikes whose premium × lot_size EXCEEDS this
+SCAN_MAX_PREMIUM_PER_LOT = 40000   # ₹ — skip strikes whose premium × lot_size EXCEEDS this (owner 2026-11-13: 30k->40k; keep <=50k)
                                    # (per-lot cost cap). 0 = no cap.
 SCAN_MIN_PREMIUM_PER_LOT = 10000   # ₹ — skip strikes whose premium × lot_size is BELOW this,
                                    # so we buy near-ATM options with real value / history (not
@@ -290,14 +290,16 @@ FORCE_CLOSE_SCORE_WEIGHTS = {'M15': 1}                              # single-TF:
 # INDEX slope set (computed on the main index, e.g. NSE:NIFTY50-INDEX): drives OPEN (entry +
 # ladder-add gate) and the entry agreement-gate veto (FORCE_CLOSE score at entry). With the
 # current sections this is {H4, M5, M15}.
+# Extra timeframes shown on the dashboard's Index / CE / PE slope rows — DISPLAY ONLY, no decision
+# weight. Kept SEPARATE from the score weights so a decision-TF change (e.g. force-close → M15) never
+# shrinks what you can SEE on the dashboard. The index + both legs fetch (and show) all of these.
+DISPLAY_TFS = ('M5', 'M15', 'H1', 'H4')
 SLOPE_TIMEFRAMES = ['TIMEFRAME_' + _tf for _tf in dict.fromkeys(
-    _k for _d in (OPEN_SCORE_WEIGHTS,) for _k in _d          # INDEX now only drives OPEN entry + add-gate
-)]                                                           # (the ladder RSI + force-close read the LEG)
-# LEG slope set (computed on the ACTIVE CE/PE option's own candles, once a basket is open):
-# drives the profit-BOOK and FORCE-CLOSE exits. Union of the two exit sections = {M5, M15}.
+    list(OPEN_SCORE_WEIGHTS) + list(DISPLAY_TFS))]          # INDEX: OPEN-score TFs + the display TFs
+# LEG slope set (computed on the ACTIVE CE/PE option's own candles) — drives BOOK + FORCE-CLOSE
+# (they read M15), PLUS the display TFs so the dashboard shows the leg's full M5/M15/H1/H4 readout.
 LEG_SLOPE_TIMEFRAMES = ['TIMEFRAME_' + _tf for _tf in dict.fromkeys(
-    _k for _d in (BOOK_SCORE_WEIGHTS, FORCE_CLOSE_SCORE_WEIGHTS) for _k in _d   # leg slopes: BOOK (M5)
-)]                                                           # + FORCE-CLOSE (M15·H1·H4) — both on the leg
+    list(BOOK_SCORE_WEIGHTS) + list(FORCE_CLOSE_SCORE_WEIGHTS) + list(DISPLAY_TFS))]
 # CANDIDATE-leg slope set, computed while FLAT to gate a fresh entry: the option leg's own H4 + M5
 # (both RSI+MACD must be +ve), plus M15 for the anti-vibration check (must not already be reversing).
 OPEN_LEG_TIMEFRAMES = ['TIMEFRAME_H1', 'TIMEFRAME_H4', 'TIMEFRAME_M15', 'TIMEFRAME_M5']   # candidate-leg entry gate (H1+M15) + H4/M5 grey backups
