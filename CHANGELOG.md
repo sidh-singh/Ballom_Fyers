@@ -1,5 +1,22 @@
 # CHANGELOG — `fyers_live` / `fyers_demo`
 
+## 2026-11-13 — Dashboard: full per-TF slopes restored + "why not trading" diagnostics; premium 40k
+
+1. **Leg slopes restored (M5/M15/H1/H4).** The force-close->M15 change had collapsed
+   `LEG_SLOPE_TIMEFRAMES` to {M15}, so the dashboard's CE/PE rows showed only M15 (that's why 1H etc.
+   vanished for the legs). New display-only `DISPLAY_TFS = (M5,M15,H1,H4)` is unioned into the index +
+   leg slope-fetch sets, so all four show again for Index, CE and PE — WITHOUT changing any decision
+   (open / book / force-close still use their own weighted TFs).
+2. **"Why" diagnostics on every symbol panel.** The ANALYSIS card now shows a plain-English reason the
+   bot is (not) trading + the entry-gate breakdown: index-H1 direction, leg-H1 ok, leg-M15 ok, pair /
+   scan-empty, entry-allowed / cooldown. A silent no-trade is now self-explanatory. `strategy.py`
+   exposes `idx_dir`/`h1_ok`/`m15_ok`; `symbol_worker` forwards them; `dashboard._diag_block` renders.
+3. **Premium cap 30k -> 40k** (`SCAN_MAX_PREMIUM_PER_LOT`) so richer GOLD/SILVER strikes pass the strict
+   filter (owner: keep <= 50k).
+
+Applies to all 8 netting+hedging branches (the 40k cap also on the 4 plain fyers). **Engine + dashboard
+restart required.**
+
 ## 2026-11-13 — Scanner: relaxed fallback so a thin chain never returns SCAN_EMPTY (try next-best)
 
 When the strict filters (OI >= SCAN_MIN_OI, premium band) excluded EVERY strike — common for GOLD/SILVER
