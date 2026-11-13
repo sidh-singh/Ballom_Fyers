@@ -81,6 +81,26 @@ badge simply renders nothing, so the dashboard stays backward-compatible.
 
 ---
 
+## Per-symbol diagnostics — "why (not) trading"
+
+So a quiet bot is never a mystery, each symbol's **ANALYSIS** card opens with a plain-English **"Why"**
+line plus the raw entry-gate breakdown:
+
+- **Why** — e.g. *"re-entry cooldown"*, *"⚠ no tradeable pair — scan empty"*, *"wait — index H1 flat"*,
+  *"wait — candidate leg H1 not advancing"*, *"wait — candidate leg M15 not advancing"*,
+  *"BUY/CE conditions met — entering"*, or *"holding CE — managing exit"*.
+- **Gate flags** — `index H1 UP/DOWN/FLAT · leg H1 ✓/– · leg M15 ✓/– · pair ✓/scan-empty ·
+  entry-allowed/cooldown` — so you can see exactly which condition is blocking an entry. (`strategy.py`
+  exposes `idx_dir`/`h1_ok`/`m15_ok`; the worker forwards them; `dashboard._diag_block` renders them.)
+
+Above that, the **RSI + MACD slopes** block shows, per timeframe, green ▲ / red ▼ / grey – for **both**
+the RSI and the MACD pivot-slope, as three rows — **Index**, **CE**, **PE** — across **M5 / M15 / H1 /
+H4** (`DISPLAY_TFS`, a display-only set kept separate from the decision timeframes, so changing a
+decision TF never blanks the readout). The **pair** block shows the chosen CE/PE strikes, premiums and
+expiry (or *scanning…* while flat with no pair yet).
+
+---
+
 ## Security — the Force-close password
 
 Force-close flattens a **real open position** (simulated on demo), and the dashboard is
