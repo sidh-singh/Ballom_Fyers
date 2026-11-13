@@ -595,6 +595,53 @@ def _position_block(pos):
     ], style={"margin": "6px 0"})
 
 
+def _diag_block(s):
+    """Why the bot is doing what it is — entry-gate breakdown + pair/scan status, so a 'not trading'
+    state is NEVER silent: you can see exactly which condition is blocking an entry."""
+    pos = s.get("position")
+    pair = s.get("pair") or {}
+    idx_dir = int(s.get("idx_dir", 0) or 0)
+    h1 = int(s.get("h1_ok", 0) or 0)
+    m15 = int(s.get("m15_ok", 0) or 0)
+    cooldown = not s.get("entry_allowed", True)
+    has_pair = bool(pair.get("CE_Symbol"))
+    if pos:
+        why, wcol = f"holding {pos.get('side')} — managing exit", C["blue"]
+    elif cooldown:
+        why, wcol = "re-entry cooldown (waiting after the last close)", C["amber"]
+    elif not has_pair:
+        why, wcol = "⚠ no tradeable pair — scan returned empty", C["red"]
+    elif idx_dir == 0:
+        why, wcol = "wait — index H1 has no direction (grey)", C["muted"]
+    elif h1 != 1:
+        why, wcol = f"wait — candidate leg H1 not advancing (index {'UP' if idx_dir > 0 else 'DOWN'})", C["muted"]
+    elif m15 != 1:
+        why, wcol = "wait — candidate leg M15 not advancing", C["muted"]
+    else:
+        why, wcol = f"{'BUY / CE' if idx_dir > 0 else 'SELL / PE'} conditions met — entering", C["green"]
+    dtxt, dcol = {1: ("index H1 UP", C["green"]), -1: ("index H1 DOWN", C["red"])}.get(
+        idx_dir, ("index H1 FLAT", C["muted"]))
+
+    def _flag(v, lab):
+        return html.Span(f"{lab} {'✓' if v == 1 else '–'}",
+                         style={"color": C["green"] if v == 1 else C["muted"], "fontSize": "11px",
+                                "fontWeight": "700", "marginLeft": "10px"})
+    return html.Div([
+        html.Div([html.Span("Why: ", style={"color": C["muted"], "fontSize": "12px"}),
+                  html.Span(why, style={"color": wcol, "fontSize": "12px", "fontWeight": "800"})]),
+        html.Div([
+            html.Span(dtxt, style={"color": dcol, "fontSize": "11px", "fontWeight": "700"}),
+            _flag(h1, "leg H1"), _flag(m15, "leg M15"),
+            html.Span("pair ✓" if has_pair else "pair ✗ scan-empty",
+                      style={"color": C["green"] if has_pair else C["red"], "fontSize": "11px",
+                             "fontWeight": "700", "marginLeft": "10px"}),
+            html.Span("entry-allowed" if not cooldown else "cooldown",
+                      style={"color": C["muted"], "fontSize": "11px", "marginLeft": "10px"}),
+        ], style={"marginTop": "3px"}),
+    ], style={"margin": "0 0 8px", "padding": "6px 8px", "background": "rgba(255,255,255,0.03)",
+              "borderRadius": "7px", "border": f"1px solid {C['border']}"})
+
+
 def symbol_panel(symbol, s, closes, oh=None, events=None, show_avg=False,
                  historical=False, view_label="today"):
     # ── booked totals (shared) ──
@@ -656,7 +703,8 @@ def symbol_panel(symbol, s, closes, oh=None, events=None, show_avg=False,
     # ANALYSIS (always visible — pair, entry scores, RSI). Slope mini-charts + cumulative removed:
     # the compact 3-way slopes (above) and the per-position chart's cumulative line now cover them.
     analysis = _card([
-        _title("ANALYSIS — pair · entry scores · RSI"),
+        _title("ANALYSIS - why - pair - entry scores - RSI"),
+        _diag_block(s),
         _pair_block(s.get("pair")),
         html.Div(style={"height": "8px"}),
         _slope_block(s),
