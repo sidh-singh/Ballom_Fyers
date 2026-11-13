@@ -128,18 +128,19 @@ def _score(o: dict, spot: float, otype: str, lot_size, max_per_lot: float,
 def _pick_deterministic(chain, spot: float, round_step: float):
     """Deterministic CE/PE strike pick (SCAN_MODE='deterministic'). Snap spot to the round-strike grid
     (ATM) and take the chain option AT that strike (± SCAN_OTM_STEPS grid steps) per side. A PURE
-    function of (spot, grid, chain) — NO OI/volume/spread/premium inputs — so two bots scanning the
-    same minute, even on different machines, pick the SAME strikes. A target exactly between two listed
-    strikes breaks to the lower strike, so both bots still agree. Returns
-    {'CE': (strike, ltp, symbol), 'PE': (...)} or None if either side has no usable strike."""
+    function of (spot, grid, chain), so two bots scanning the same minute pick the SAME strikes. It
+    PREFERS a liquid strike near the target (oi or volume > 0); if none near the target is liquid
+    (e.g. a thin GOLD/SILVER chain), it RELAXES to the nearest PRICED strike rather than returning
+    nothing (no SCAN_EMPTY). A target exactly between two strikes breaks to the lower one. Returns
+    {'CE': (strike, ltp, symbol), 'PE': (...)} or None only if a side has no priced strike at all."""
     if round_step and round_step > 0:
         atm = round(spot / round_step) * round_step
         targets = {"CE": atm + SCAN_OTM_STEPS * round_step,
                    "PE": atm - SCAN_OTM_STEPS * round_step}
     else:
         targets = {"CE": spot, "PE": spot}          # no grid → nearest listed strike to spot
-    out = {}
-    for otype, target in targets.items():
+
+    def _nearest(otype, target, require_liquid):
         best = None                                  # (distance, strike, ltp, symbol)
         for o in chain:
             if o.get("option_type") != otype:
@@ -147,13 +148,20 @@ def _pick_deterministic(chain, spot: float, round_step: float):
             strike = float(o.get("strike_price", 0) or 0)
             ltp = float(o.get("ltp", 0) or 0)
             sym = o.get("symbol", "")
-            oi = float(o.get("oi", 0) or 0)
-            vol = float(o.get("volume", 0) or 0)
-            if strike <= 0 or ltp <= 0 or not sym or (oi <= 0 and vol <= 0):
-                continue    # skip illiquid strikes -> pick the nearest TRADEABLE strike to target
+            if strike <= 0 or ltp <= 0 or not sym:
+                continue
+            if require_liquid and float(o.get("oi", 0) or 0) <= 0 and float(o.get("volume", 0) or 0) <= 0:
+                continue                             # illiquid → skip on the strict pass only
             d = abs(strike - target)
             if best is None or d < best[0] or (d == best[0] and strike < best[1]):
                 best = (d, strike, ltp, sym)
+        return best
+
+    out = {}
+    for otype, target in targets.items():
+        # 1st choice = nearest LIQUID strike; fall back to nearest PRICED strike (2nd/3rd best) so a
+        # thin chain still yields a tradeable pair instead of SCAN_EMPTY.
+        best = _nearest(otype, target, require_liquid=True) or _nearest(otype, target, require_liquid=False)
         if best is None:
             return None
         out[otype] = (best[1], best[2], best[3])     # strike, ltp, symbol
