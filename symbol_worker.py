@@ -630,6 +630,9 @@ class SymbolWorker(threading.Thread):
                        "book": ad.get("book_score"),
                        "fc": ad.get("fc_score", 0)},
             "entry_direction": ad.get("entry_direction", "WAIT"),
+            "idx_dir": ad.get("idx_dir", 0),          # dashboard diagnostics: entry-gate breakdown
+            "h1_ok": ad.get("h1_ok", 0),
+            "m15_ok": ad.get("m15_ok", 0),
             "slope_direction": ad.get("slope_direction", "WAIT"),
             "slopes": _signs(ad.get("slopes")),               # index slopes (open)
             "leg_slopes": _signs(ad.get("leg_slopes")),       # leg slopes (book/fc)
